@@ -11,7 +11,7 @@ import optax
 from jax import random, vmap, jit
 from jax.scipy.stats import norm
 from jaxtyping import PyTree
-import flax.linen as nn
+
 
 import wandb
 from bsm.utils.mlp import MLP
@@ -88,7 +88,7 @@ class DeterministicEnsemble:
 
         target_outputs_norm = vmap(self.normalizer.normalize, in_axes=(0, None))(outputs, data_stats.outputs)
         negative_log_likelihood = self._neg_log_posterior(predicted_outputs, predicted_stds, target_outputs_norm)
-        mse = jnp.mean((predicted_outputs - outputs[None, ...]) ** 2)
+        mse = jnp.mean((predicted_outputs - target_outputs_norm[None, ...]) ** 2)
         return negative_log_likelihood, mse
 
     @partial(jit, static_argnums=0)
@@ -195,40 +195,6 @@ class DeterministicEnsemble:
         return jnp.mean(cdfs, axis=0)
 
 
-class ProbabilisticEnsemble(DeterministicEnsemble):
-    def __init__(self, features: Sequence[int], sig_min: float = 1e-3, sig_max: float = 1e3, *args, **kwargs):
-        super().__init__(features=features, *args, **kwargs)
-        self.model = MLP(features=features, output_dim=2 * self.output_dim)
-        self.sig_min = sig_min
-        self.sig_max = sig_max
-
-    def _apply_train(self,
-                     params: PyTree,
-                     x: chex.Array,
-                     data_stats: DataStats) -> [chex.Array, chex.Array]:
-        chex.assert_shape(x, (self.input_dim,))
-        x = self.normalizer.normalize(x, data_stats.inputs)
-        out = self.model.apply({'params': params}, x)
-        mu, sig = jnp.split(out, 2, axis=-1)
-        sig = nn.softplus(sig)
-        sig = jnp.clip(sig, 0, self.sig_max) + self.sig_min
-        return mu, sig
-
-    def apply_eval(self,
-                   params: PyTree,
-                   x: chex.Array,
-                   data_stats: DataStats) -> [chex.Array, chex.Array]:
-        chex.assert_shape(x, (self.input_dim,))
-        x = self.normalizer.normalize(x, data_stats.inputs)
-        out = self.model.apply({'params': params}, x)
-        mu, sig = jnp.split(out, 2, axis=-1)
-        sig = nn.softplus(sig)
-        sig = jnp.clip(sig, 0, self.sig_max) + self.sig_min
-        mean = self.normalizer.denormalize(mu, data_stats.outputs)
-        std = self.normalizer.denormalize_std(sig, data_stats.outputs)
-        return mean, std
-
-
 def dataset(key: jax.random.PRNGKey, x: jax.Array, y: jax.Array, batch_size: int):
     ids = jnp.arange(len(x))
     while True:
@@ -286,7 +252,7 @@ if __name__ == '__main__':
     data_stats = normalizer.compute_stats(data)
 
     num_particles = 10
-    model = ProbabilisticEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
+    model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
                                   num_particles=num_particles, output_stds=data_std)
     start_time = time.time()
     print('Starting with training')
@@ -303,8 +269,8 @@ if __name__ == '__main__':
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
 
-    test_ys_noisy = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1) * (1 + noise_level * random.normal(
-        key=random.PRNGKey(0), shape=test_ys.shape))
+    test_ys_noisy = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1) + noise_level * random.normal(
+        key=random.PRNGKey(0), shape=test_ys.shape)
 
     test_stds = noise_level * jnp.ones(shape=test_ys.shape)
 
@@ -316,7 +282,7 @@ if __name__ == '__main__':
     al_std = jnp.mean(aleatoric_stds, axis=0)
     total_std = jnp.sqrt(jnp.square(eps_std) + jnp.square(al_std))
     total_calibrated_std = jax.vmap(lambda x, y, z: jnp.sqrt(jnp.square(x * z) + jnp.square(y)), in_axes=(-1, -1, -1),
-                                out_axes=-1)(eps_std, al_std, alpha_best)
+                                    out_axes=-1)(eps_std, al_std, alpha_best)
     for j in range(output_dim):
         plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
         for i in range(num_particles):

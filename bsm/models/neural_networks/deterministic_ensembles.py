@@ -6,9 +6,12 @@ from typing import Sequence, Dict
 import chex
 import jax
 import jax.numpy as jnp
+import jax.random as jr
+import jax.tree_util as jtu
 import matplotlib.pyplot as plt
 import optax
 from jax import random, vmap, jit
+from jax.lax import scan
 from jax.scipy.stats import norm
 from jaxtyping import PyTree
 

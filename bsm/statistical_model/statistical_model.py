@@ -12,7 +12,8 @@ class StatisticalModel(ABC, Generic[ModelState]):
     def apply(self, input, model_state: ModelState) -> StatisticalModelOutput:
         assert input.shape == (self.input_dim,)
         outs = self._apply(input, model_state)
-        assert outs[0].shape == outs[1].shape == outs[2].shape == outs[3].shape == (self.output_dim,)
+        assert outs.mean.shape == outs.beta.shape == (self.output_dim,)
+        assert outs.epistemic_std.shape == outs.aleatoric_std.shape == (self.output_dim,)
         return outs
 
     @abstractmethod
@@ -20,5 +21,5 @@ class StatisticalModel(ABC, Generic[ModelState]):
         raise NotImplementedError
 
     @abstractmethod
-    def update(self, *args, **kwargs) -> ModelState:
+    def update(self, model_state: ModelState, data) -> ModelState:
         pass

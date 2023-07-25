@@ -8,6 +8,11 @@ import jax.tree_util as jtu
 from jaxtyping import PyTree
 
 
+class Data(NamedTuple):
+    inputs: chex.Array
+    outputs: chex.Array
+
+
 class Stats(NamedTuple):
     mean: chex.Array
     std: chex.Array

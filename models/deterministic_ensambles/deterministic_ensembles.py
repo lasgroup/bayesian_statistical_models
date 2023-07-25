@@ -25,8 +25,7 @@ class DeterministicEnsemble:
                  output_dim: int,
                  features: Sequence[int],
                  num_particles: int,
-                 normalizer: Normalizer,
-                 stds: chex.Array,
+                 output_stds: chex.Array,
                  weight_decay: float = 1.0,
                  lr_rate: optax.Schedule | float = optax.constant_schedule(1e-3),
                  num_calibration_ps: int = 10,
@@ -34,12 +33,12 @@ class DeterministicEnsemble:
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.num_particles = num_particles
-        assert stds.shape == (output_dim,)
-        self.stds = stds
+        assert output_stds.shape == (output_dim,)
+        self.output_stds = output_stds
         self.model = MLP(features=features, output_dim=self.output_dim)
         self.key = random.PRNGKey(0)
         self.tx = optax.adamw(learning_rate=lr_rate, weight_decay=weight_decay)
-        self.normalizer = normalizer
+        self.normalizer = Normalizer()
         self.num_calibration_ps = num_calibration_ps
         self.num_test_alphas = num_test_alphas
 
@@ -49,7 +48,7 @@ class DeterministicEnsemble:
                      data_stats: DataStats) -> [chex.Array, chex.Array]:
         chex.assert_shape(x, (self.input_dim,))
         x = self.normalizer.normalize(x, data_stats.inputs)
-        return self.model.apply({'params': params}, x), self.normalizer.normalize_std(self.stds,
+        return self.model.apply({'params': params}, x), self.normalizer.normalize_std(self.output_stds,
                                                                                       data_stats.outputs)
 
     def apply_eval(self,
@@ -59,7 +58,7 @@ class DeterministicEnsemble:
         chex.assert_shape(x, (self.input_dim,))
         x = self.normalizer.normalize(x, data_stats.inputs)
         out = self.model.apply({'params': params}, x)
-        return self.normalizer.denormalize(out, data_stats.outputs), self.stds
+        return self.normalizer.denormalize(out, data_stats.outputs), self.output_stds
 
     def _nll(self,
              predicted_outputs: chex.Array,
@@ -80,7 +79,7 @@ class DeterministicEnsemble:
     def loss(self,
              vmapped_params: PyTree,
              inputs: chex.Array,
-             target_outputs: chex.Array,
+             outputs: chex.Array,
              data_stats: DataStats) -> [jax.Array, Dict]:
 
         # combine the training data batch with a batch of sampled measurement points
@@ -89,23 +88,22 @@ class DeterministicEnsemble:
         apply_ensemble = vmap(apply_ensemble_one, in_axes=(None, 0, None), out_axes=1, axis_name='batch')
         predicted_outputs, predicted_stds = apply_ensemble(vmapped_params, inputs, data_stats)
 
-        target_outputs_norm = vmap(self.normalizer.normalize, in_axes=(0, None))(target_outputs,
-                                                                                 data_stats.outputs)
+        target_outputs_norm = vmap(self.normalizer.normalize, in_axes=(0, None))(outputs, data_stats.outputs)
         negative_log_likelihood = self._neg_log_posterior(predicted_outputs, predicted_stds, target_outputs_norm)
-        mse = jnp.mean((predicted_outputs - target_outputs[None, ...]) ** 2)
+        mse = jnp.mean((predicted_outputs - outputs[None, ...]) ** 2)
         return negative_log_likelihood, mse
 
     @partial(jit, static_argnums=0)
     def eval_ll(self,
                 vmapped_params: chex.Array,
                 inputs: chex.Array,
-                target_outputs: chex.Array,
+                outputs: chex.Array,
                 data_stats: DataStats) -> chex.Array:
         apply_ensemble_one = vmap(self.apply_eval, in_axes=(0, None, None), out_axes=0)
         apply_ensemble = vmap(apply_ensemble_one, in_axes=(None, 0, None), out_axes=1, axis_name='batch')
         predicted_targets, predicted_stds = apply_ensemble(vmapped_params, inputs, data_stats)
-        nll = self._nll(predicted_targets, predicted_stds, target_outputs)
-        mse = jnp.mean((predicted_targets - target_outputs) ** 2)
+        nll = self._nll(predicted_targets, predicted_stds, outputs)
+        mse = jnp.mean((predicted_targets - outputs) ** 2)
         statistics = OrderedDict(nll=nll, mse=mse)
         return statistics
 
@@ -114,16 +112,15 @@ class DeterministicEnsemble:
                   opt_state: optax.OptState,
                   vmapped_params: chex.PRNGKey,
                   inputs: chex.Array,
-                  target_outputs: chex.Array,
+                  outputs: chex.Array,
                   data_stats: DataStats) -> (optax.OptState, PyTree, OrderedDict):
-        (loss, mse), grads = jax.value_and_grad(self.loss, has_aux=True)(vmapped_params, inputs, target_outputs,
-                                                                         data_stats)
+        (loss, mse), grads = jax.value_and_grad(self.loss, has_aux=True)(vmapped_params, inputs, outputs, data_stats)
         updates, opt_state = self.tx.update(grads, opt_state, vmapped_params)
         vmapped_params = optax.apply_updates(vmapped_params, updates)
         statiscs = OrderedDict(nll=loss, mse=mse)
         return opt_state, vmapped_params, statiscs
 
-    def init_params(self, key):
+    def _init(self, key):
         variables = self.model.init(key, jnp.ones(shape=(self.input_dim,)))
         if 'params' in variables:
             stats, params = variables.pop('params')
@@ -132,17 +129,21 @@ class DeterministicEnsemble:
         del variables  # Delete variables to avoid wasting resources
         return params
 
+    def init(self, key):
+        keys = random.split(key, self.num_particles)
+        return vmap(self._init)(keys)
+
     def fit_model(self,
                   inputs: chex.Array,
-                  target_outputs: chex.Array,
+                  outputs: chex.Array,
                   num_epochs: int,
                   data_stats: DataStats,
                   batch_size):
-        self.key, key, *subkeys = random.split(self.key, self.num_particles + 2)
-        vmapped_params = vmap(self.init_params)(jnp.stack(subkeys))
+        self.key, key = random.split(self.key)
+        vmapped_params = self.init(key)
         opt_state = self.tx.init(vmapped_params)
 
-        train_loader = self._create_data_loader((inputs, target_outputs), batch_size=batch_size)
+        train_loader = self._create_data_loader((inputs, outputs), batch_size=batch_size)
 
         for step, (inputs_batch, target_outputs_batch) in enumerate(train_loader, 1):
             key, subkey = random.split(key)
@@ -175,22 +176,22 @@ class DeterministicEnsemble:
     def calibration(self,
                     vmapped_params: PyTree,
                     inputs: chex.Array,
-                    target_outputs: chex.Array,
+                    outputs: chex.Array,
                     data_stats: DataStats) -> chex.Array:
         ps = jnp.linspace(0, 1, self.num_calibration_ps + 1)[1:]
-        return self._calculate_calibration_alpha(vmapped_params, inputs, target_outputs, ps, data_stats)
+        return self._calculate_calibration_alpha(vmapped_params, inputs, outputs, ps, data_stats)
 
     def _calculate_calibration_alpha(self,
                                      vmapped_params: PyTree,
                                      inputs: chex.Array,
-                                     target_outputs: chex.Array,
+                                     outputs: chex.Array,
                                      ps: chex.Array,
                                      data_stats: DataStats) -> chex.Array:
         # We flip so that we rather take more uncertainty model than less
         test_alpha = jnp.flip(jnp.linspace(0, 10, self.num_test_alphas)[1:])
         test_alphas = jnp.repeat(test_alpha[..., jnp.newaxis], repeats=self.output_dim, axis=1)
         errors = vmap(self._calibration_errors, in_axes=(None, None, None, None, None, 0))(
-            vmapped_params, inputs, target_outputs, ps, data_stats, test_alphas)
+            vmapped_params, inputs, outputs, ps, data_stats, test_alphas)
         indices = jnp.argmin(errors, axis=0)
         best_alpha = test_alpha[indices]
         chex.assert_shape(best_alpha, (self.output_dim,))
@@ -199,18 +200,18 @@ class DeterministicEnsemble:
     def _calibration_errors(self,
                             vmapped_params: PyTree,
                             inputs: chex.Array,
-                            target_outputs: chex.Array,
+                            outputs: chex.Array,
                             ps: chex.Array,
                             data_stats: DataStats,
                             alpha: chex.Array) -> chex.Array:
-        ps_hat = self._calculate_calibration_score(vmapped_params, inputs, target_outputs, ps, data_stats, alpha)
+        ps_hat = self._calculate_calibration_score(vmapped_params, inputs, outputs, ps, data_stats, alpha)
         ps = jnp.repeat(ps[..., jnp.newaxis], repeats=self.output_dim, axis=1)
         return jnp.mean((ps - ps_hat) ** 2, axis=0)
 
     def _calculate_calibration_score(self,
                                      vmapped_params: PyTree,
                                      inputs: chex.Array,
-                                     target_outputs: chex.Array,
+                                     outputs: chex.Array,
                                      ps: chex.Array,
                                      data_stats: DataStats,
                                      alpha: chex.Array) -> chex.Array:
@@ -232,7 +233,7 @@ class DeterministicEnsemble:
 
             return vmap(check_cdf, out_axes=1)(cdfs)
 
-        cdfs = vmap(calculate_score)(inputs, target_outputs)
+        cdfs = vmap(calculate_score)(inputs, outputs)
         return jnp.mean(cdfs, axis=0)
 
 
@@ -254,7 +255,7 @@ if __name__ == '__main__':
 
     num_particles = 10
     model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
-                                  num_particles=num_particles, normalizer=normalizer, stds=data_std)
+                                  num_particles=num_particles, output_stds=data_std)
     start_time = time.time()
     print('Starting with training')
     wandb.init(
@@ -262,7 +263,7 @@ if __name__ == '__main__':
         group='test group',
     )
 
-    model_params = model.fit_model(inputs=xs, target_outputs=ys, num_epochs=1000, data_stats=data_stats,
+    model_params = model.fit_model(inputs=xs, outputs=ys, num_epochs=1000, data_stats=data_stats,
                                    batch_size=32)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 

@@ -16,7 +16,7 @@ from jaxtyping import PyTree
 
 import wandb
 from utils.mlp import MLP
-from utils.normalization import Normalizer, DataStats, Stats
+from utils.normalization import Normalizer, DataStats
 
 
 class DeterministicEnsemble:
@@ -28,7 +28,7 @@ class DeterministicEnsemble:
                  normalizer: Normalizer,
                  stds: chex.Array,
                  weight_decay: float = 1.0,
-                 lr_rate: float = 1e-3,
+                 lr_rate: optax.Schedule | float = optax.constant_schedule(1e-3),
                  num_calibration_ps: int = 10,
                  num_test_alphas: int = 100):
         self.input_dim = input_dim
@@ -48,18 +48,18 @@ class DeterministicEnsemble:
                      x: chex.Array,
                      data_stats: DataStats) -> [chex.Array, chex.Array]:
         chex.assert_shape(x, (self.input_dim,))
-        x = self.normalizer.normalize(x, data_stats.input_stats)
+        x = self.normalizer.normalize(x, data_stats.inputs)
         return self.model.apply({'params': params}, x), self.normalizer.normalize_std(self.stds,
-                                                                                      data_stats.output_stats)
+                                                                                      data_stats.outputs)
 
     def apply_eval(self,
                    params: PyTree,
                    x: chex.Array,
                    data_stats: DataStats) -> [chex.Array, chex.Array]:
         chex.assert_shape(x, (self.input_dim,))
-        x = self.normalizer.normalize(x, data_stats.input_stats)
+        x = self.normalizer.normalize(x, data_stats.inputs)
         out = self.model.apply({'params': params}, x)
-        return self.normalizer.denormalize(out, data_stats.output_stats), self.stds
+        return self.normalizer.denormalize(out, data_stats.outputs), self.stds
 
     def _nll(self,
              predicted_outputs: chex.Array,
@@ -90,7 +90,7 @@ class DeterministicEnsemble:
         predicted_outputs, predicted_stds = apply_ensemble(vmapped_params, inputs, data_stats)
 
         target_outputs_norm = vmap(self.normalizer.normalize, in_axes=(0, None))(target_outputs,
-                                                                                 data_stats.output_stats)
+                                                                                 data_stats.outputs)
         negative_log_likelihood = self._neg_log_posterior(predicted_outputs, predicted_stds, target_outputs_norm)
         mse = jnp.mean((predicted_outputs - target_outputs[None, ...]) ** 2)
         return negative_log_likelihood, mse
@@ -247,9 +247,10 @@ if __name__ == '__main__':
     ys = jnp.concatenate([jnp.sin(xs), jnp.cos(xs)], axis=1)
     ys = ys + noise_level * random.normal(key=random.PRNGKey(0), shape=ys.shape)
     data_std = noise_level * jnp.ones(shape=(output_dim,))
-    data_stats = DataStats(input_stats=Stats(mean=jnp.mean(xs, axis=0), std=jnp.std(xs, axis=0)),
-                           output_stats=Stats(mean=jnp.mean(ys, axis=0), std=jnp.std(ys, axis=0)))
+
     normalizer = Normalizer()
+    data = DataStats(inputs=xs, outputs=ys)
+    data_stats = normalizer.compute_stats(data)
 
     num_particles = 10
     model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],

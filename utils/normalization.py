@@ -14,8 +14,8 @@ class Stats(NamedTuple):
 
 
 class DataStats(NamedTuple):
-    input_stats: Stats
-    output_stats: Stats
+    inputs: Stats
+    outputs: Stats
 
 
 class Normalizer:

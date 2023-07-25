@@ -6,11 +6,13 @@ from typing import Sequence, Dict
 import chex
 import jax
 import jax.numpy as jnp
+import jax.random as jr
+import jax.tree_util as jtu
 import matplotlib.pyplot as plt
 import optax
-import tensorflow as tf
-import tensorflow_datasets as tfds
+from brax.training.replay_buffers import UniformSamplingQueue
 from jax import random, vmap, jit
+from jax.lax import scan
 from jax.scipy.stats import norm
 from jaxtyping import PyTree
 
@@ -143,35 +145,25 @@ class DeterministicEnsemble:
         vmapped_params = self.init(key)
         opt_state = self.tx.init(vmapped_params)
 
-        train_loader = self._create_data_loader((inputs, outputs), batch_size=batch_size)
+        queue = UniformSamplingQueue(max_replay_size=1000, dummy_data_sample=(inputs[0], outputs[0]),
+                                     sample_batch_size=batch_size)
+        init_state = queue.init(jr.PRNGKey(0))
+        state = queue.insert(init_state, (inputs, outputs))
 
-        for step, (inputs_batch, target_outputs_batch) in enumerate(train_loader, 1):
-            key, subkey = random.split(key)
+        def f(carry, _):
+            state, opt_state, vmapped_params = carry
+            state, (inputs_batch, target_outputs_batch) = queue.sample(state)
             opt_state, vmapped_params, statistics = self._step_jit(opt_state, vmapped_params, inputs_batch,
                                                                    target_outputs_batch, data_stats)
+            return (state, opt_state, vmapped_params), statistics
 
-            wandb.log(statistics)
-            if step >= num_epochs:
-                break
-
-            if step % 100 == 0 or step == 1:
-                statistics = self.eval_ll(vmapped_params, inputs_batch, target_outputs_batch, data_stats)
-                print(f"Step {step}: {statistics}")
-
+        init_carry = (state, opt_state, vmapped_params)
+        last_carry, statistics = scan(f, init_carry, None, length=num_epochs)
+        for i in range(num_epochs):
+            stats = jtu.tree_map(lambda x: x[i], statistics)
+            wandb.log(stats)
+        state, opt_state, vmapped_params = last_carry
         return vmapped_params
-
-    def _create_data_loader(self, vec_data: PyTree,
-                            batch_size: int = 64, shuffle: bool = True,
-                            infinite: bool = True) -> tf.data.Dataset:
-        ds = tf.data.Dataset.from_tensor_slices(vec_data)
-        if shuffle:
-            seed = int(jax.random.randint(self.key, (1,), 0, 10 ** 8))
-            ds = ds.shuffle(batch_size * 4, seed=seed, reshuffle_each_iteration=True)
-        if infinite:
-            ds = ds.repeat()
-        ds = ds.batch(batch_size)
-        ds = tfds.as_numpy(ds)
-        return ds
 
     def calibration(self,
                     vmapped_params: PyTree,
@@ -262,7 +254,7 @@ if __name__ == '__main__':
         project='Pendulum',
         group='test group',
     )
-
+    start_time = time.time()
     model_params = model.fit_model(inputs=xs, outputs=ys, num_epochs=1000, data_stats=data_stats,
                                    batch_size=32)
     print(f'Training time: {time.time() - start_time:.2f} seconds')

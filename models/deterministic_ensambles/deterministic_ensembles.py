@@ -216,7 +216,7 @@ class DeterministicEnsemble:
                                      alpha: chex.Array) -> chex.Array:
         chex.assert_shape(alpha, (self.output_dim,))
 
-        def calculate_score(x, y):
+        def calculate_score(x: chex.Array, y: chex.Array) -> chex.Array:
             assert x.shape == (self.input_dim,) and y.shape == (self.output_dim,)
             predicted_outputs, predicted_stds = vmap(self.apply_eval, in_axes=(0, None, None), out_axes=0)(
                 vmapped_params, x, data_stats)

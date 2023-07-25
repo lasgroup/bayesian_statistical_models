@@ -1,6 +1,5 @@
 from collections import OrderedDict
 from functools import partial
-from typing import NamedTuple
 
 import chex
 import distrax
@@ -14,10 +13,12 @@ from jaxtyping import PyTree
 
 import wandb
 from models.gaussian_processes.kernels import Kernel, RBF
+from utils import type_aliases
 from utils.normalization import Normalizer, DataStats, Data
 
 
-class GPModel(NamedTuple):
+@chex.dataclass
+class GPModelState(type_aliases.ModelState):
     history: Data
     data_stats: DataStats
     params: PyTree
@@ -109,7 +110,7 @@ class GaussianProcess:
         return vmapped_params
 
     @partial(jit, static_argnums=0)
-    def posterior(self, input, gp_model: GPModel) -> distrax.Normal:
+    def posterior(self, input, gp_model: GPModelState) -> distrax.Normal:
         assert input.ndim == 1
         input_norm = self.normalizer.normalize(input, gp_model.data_stats.inputs)
 
@@ -182,7 +183,7 @@ if __name__ == '__main__':
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
-    gp_model = GPModel(history=Data(inputs=xs, outputs=ys), params=model_params, data_stats=data_stats)
+    gp_model = GPModelState(history=Data(inputs=xs, outputs=ys), params=model_params, data_stats=data_stats)
     preds = vmap(model.posterior, in_axes=(0, None))(test_xs, gp_model)
     pred_means = preds.mean()
     epistemic_stds = preds.scale

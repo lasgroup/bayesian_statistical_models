@@ -1,0 +1,11 @@
+# DS Store files
+.DS_Store
+
+# wandb files
+wandb*
+
+# egg-info files
+*egg-info
+
+# idea files
+.idea/

@@ -9,3 +9,6 @@ wandb*
 
 # idea files
 .idea/
+
+#pycache
+__pycache__

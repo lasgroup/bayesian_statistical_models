@@ -10,11 +10,11 @@ import jax.random as jr
 import jax.tree_util as jtu
 import matplotlib.pyplot as plt
 import optax
-from brax.training.replay_buffers import UniformSamplingQueue
 from jax import random, vmap, jit
 from jax.lax import scan
 from jax.scipy.stats import norm
 from jaxtyping import PyTree
+
 
 import wandb
 from bsm.utils.mlp import MLP
@@ -38,7 +38,6 @@ class DeterministicEnsemble:
         assert output_stds.shape == (output_dim,)
         self.output_stds = output_stds
         self.model = MLP(features=features, output_dim=self.output_dim)
-        self.key = random.PRNGKey(0)
         self.tx = optax.adamw(learning_rate=lr_rate, weight_decay=weight_decay)
         self.normalizer = Normalizer()
         self.num_calibration_ps = num_calibration_ps
@@ -92,7 +91,7 @@ class DeterministicEnsemble:
 
         target_outputs_norm = vmap(self.normalizer.normalize, in_axes=(0, None))(outputs, data_stats.outputs)
         negative_log_likelihood = self._neg_log_posterior(predicted_outputs, predicted_stds, target_outputs_norm)
-        mse = jnp.mean((predicted_outputs - outputs[None, ...]) ** 2)
+        mse = jnp.mean((predicted_outputs - target_outputs_norm[None, ...]) ** 2)
         return negative_log_likelihood, mse
 
     @partial(jit, static_argnums=0)
@@ -110,12 +109,12 @@ class DeterministicEnsemble:
         return statistics
 
     @partial(jit, static_argnums=0)
-    def _step_jit(self,
-                  opt_state: optax.OptState,
-                  vmapped_params: chex.PRNGKey,
-                  inputs: chex.Array,
-                  outputs: chex.Array,
-                  data_stats: DataStats) -> (optax.OptState, PyTree, OrderedDict):
+    def step_jit(self,
+                 opt_state: optax.OptState,
+                 vmapped_params: chex.PRNGKey,
+                 inputs: chex.Array,
+                 outputs: chex.Array,
+                 data_stats: DataStats) -> (optax.OptState, PyTree, OrderedDict):
         (loss, mse), grads = jax.value_and_grad(self.loss, has_aux=True)(vmapped_params, inputs, outputs, data_stats)
         updates, opt_state = self.tx.update(grads, opt_state, vmapped_params)
         vmapped_params = optax.apply_updates(vmapped_params, updates)
@@ -134,36 +133,6 @@ class DeterministicEnsemble:
     def init(self, key):
         keys = random.split(key, self.num_particles)
         return vmap(self._init)(keys)
-
-    def fit_model(self,
-                  inputs: chex.Array,
-                  outputs: chex.Array,
-                  num_epochs: int,
-                  data_stats: DataStats,
-                  batch_size):
-        self.key, key = random.split(self.key)
-        vmapped_params = self.init(key)
-        opt_state = self.tx.init(vmapped_params)
-
-        queue = UniformSamplingQueue(max_replay_size=1000, dummy_data_sample=(inputs[0], outputs[0]),
-                                     sample_batch_size=batch_size)
-        init_state = queue.init(jr.PRNGKey(0))
-        state = queue.insert(init_state, (inputs, outputs))
-
-        def f(carry, _):
-            state, opt_state, vmapped_params = carry
-            state, (inputs_batch, target_outputs_batch) = queue.sample(state)
-            opt_state, vmapped_params, statistics = self._step_jit(opt_state, vmapped_params, inputs_batch,
-                                                                   target_outputs_batch, data_stats)
-            return (state, opt_state, vmapped_params), statistics
-
-        init_carry = (state, opt_state, vmapped_params)
-        last_carry, statistics = scan(f, init_carry, None, length=num_epochs)
-        for i in range(num_epochs):
-            stats = jtu.tree_map(lambda x: x[i], statistics)
-            wandb.log(stats)
-        state, opt_state, vmapped_params = last_carry
-        return vmapped_params
 
     def calibration(self,
                     vmapped_params: PyTree,
@@ -229,8 +198,48 @@ class DeterministicEnsemble:
         return jnp.mean(cdfs, axis=0)
 
 
+def dataset(key: jax.random.PRNGKey, x: jax.Array, y: jax.Array, batch_size: int):
+    ids = jnp.arange(len(x))
+    while True:
+        sample_key, key = jax.random.split(key, 2)
+        ids = jax.random.choice(sample_key, ids, shape=(batch_size,), replace=False)
+        yield x[ids], y[ids]
+
+
+def fit_model(model: DeterministicEnsemble,
+              inputs: chex.Array,
+              outputs: chex.Array,
+              num_epochs: int,
+              data_stats: DataStats,
+              batch_size: int,
+              key: jax.random.PRNGKey,
+              log_training: bool = False):
+    key, init_key = random.split(key)
+    vmapped_params = model.init(key)
+    opt_state = model.tx.init(vmapped_params)
+    key, shuffle_key = random.split(key)
+    data = iter(dataset(key, inputs, outputs, batch_size))
+    num_train_steps = len(inputs) * num_epochs
+    for step in range(num_train_steps):
+        key, subkey = random.split(key)
+        inputs_batch, target_outputs_batch = next(data)
+        opt_state, vmapped_params, statistics = model.step_jit(opt_state, vmapped_params, inputs_batch,
+                                                               target_outputs_batch, data_stats)
+        if log_training:
+            wandb.log(statistics)
+        if step >= num_epochs:
+            break
+
+        if step % 100 == 0 or step == 1:
+            statistics = model.eval_ll(vmapped_params, inputs_batch, target_outputs_batch, data_stats)
+            print(f"Step {step}: {statistics}")
+
+    return vmapped_params
+
+
 if __name__ == '__main__':
     key = random.PRNGKey(0)
+    log_training = False
     input_dim = 1
     output_dim = 2
 
@@ -250,13 +259,14 @@ if __name__ == '__main__':
                                   num_particles=num_particles, output_stds=data_std)
     start_time = time.time()
     print('Starting with training')
-    wandb.init(
-        project='Pendulum',
-        group='test group',
-    )
-    start_time = time.time()
-    model_params = model.fit_model(inputs=xs, outputs=ys, num_epochs=1000, data_stats=data_stats,
-                                   batch_size=32)
+    if log_training:
+        wandb.init(
+            project='Pendulum',
+            group='test group',
+        )
+
+    model_params = fit_model(model=model, inputs=xs, outputs=ys, num_epochs=1000, data_stats=data_stats,
+                             batch_size=32, key=key, log_training=log_training)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
@@ -270,15 +280,20 @@ if __name__ == '__main__':
     alpha_best = model.calibration(model_params, test_xs, test_ys_noisy, data_stats)
     apply_ens = vmap(model.apply_eval, in_axes=(None, 0, None))
     preds, aleatoric_stds = vmap(apply_ens, in_axes=(0, None, None))(model_params, test_xs, data_stats)
-
+    pred_mean = jnp.mean(preds, axis=0)
+    eps_std = jnp.std(preds, axis=0)
+    al_std = jnp.mean(aleatoric_stds, axis=0)
+    total_std = jnp.sqrt(jnp.square(eps_std) + jnp.square(al_std))
+    total_calibrated_std = jax.vmap(lambda x, y, z: jnp.sqrt(jnp.square(x * z) + jnp.square(y)), in_axes=(-1, -1, -1),
+                                    out_axes=-1)(eps_std, al_std, alpha_best)
     for j in range(output_dim):
         plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
         for i in range(num_particles):
             plt.plot(test_xs, preds[i, :, j], label='NN prediction', color='black', alpha=0.3)
         plt.plot(test_xs, jnp.mean(preds[..., j], axis=0), label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
-                         (jnp.mean(preds[..., j], axis=0) - 2 * jnp.std(preds[..., j], axis=0)).reshape(-1),
-                         (jnp.mean(preds[..., j], axis=0) + 2 * jnp.std(preds[..., j], axis=0)).reshape(-1),
+                         (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
+                         (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
                          label=r'$2\sigma$', alpha=0.3, color='blue')
         handles, labels = plt.gca().get_legend_handles_labels()
         plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
@@ -292,8 +307,8 @@ if __name__ == '__main__':
             plt.plot(test_xs, preds[i, :, j], label='NN prediction', color='black', alpha=0.3)
         plt.plot(test_xs, jnp.mean(preds[..., j], axis=0), label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
-                         (jnp.mean(preds[..., j], axis=0) - 2 * jnp.std(preds[..., j], axis=0)).reshape(-1),
-                         (jnp.mean(preds[..., j], axis=0) + 2 * jnp.std(preds[..., j], axis=0)).reshape(-1),
+                         (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
+                         (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
                          label=r'$2\sigma$', alpha=0.3, color='blue')
         handles, labels = plt.gca().get_legend_handles_labels()
         plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
@@ -306,11 +321,13 @@ if __name__ == '__main__':
             plt.plot(test_xs, preds[i, :, j], label='NN prediction', color='black', alpha=0.3)
         plt.plot(test_xs, jnp.mean(preds[..., j], axis=0), label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
-                         (jnp.mean(preds[..., j], axis=0) - 2 * alpha_best[j] * jnp.std(preds[..., j], axis=0)).reshape(
-                             -1),
-                         (jnp.mean(preds[..., j], axis=0) + 2 * alpha_best[j] * jnp.std(preds[..., j], axis=0)).reshape(
-                             -1),
-                         label=r'$2\sigma$', alpha=0.3, color='blue')
+                         (pred_mean[..., j] - 2 * total_calibrated_std[..., j]).reshape(-1),
+                         (pred_mean[..., j] + 2 * total_calibrated_std[..., j]).reshape(-1),
+                         label=r'$2\sigma}$', alpha=0.3, color='yellow')
+        plt.fill_between(test_xs.reshape(-1),
+                         (pred_mean[..., j] - 2 * alpha_best[j] * eps_std[..., j]).reshape(-1),
+                         (pred_mean[..., j] + 2 * alpha_best[j] * eps_std[..., j]).reshape(-1),
+                         label=r'$2\sigma_{eps}$', alpha=0.3, color='blue')
         handles, labels = plt.gca().get_legend_handles_labels()
         plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
         by_label = dict(zip(labels, handles))

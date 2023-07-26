@@ -15,6 +15,7 @@ from jaxtyping import PyTree
 import wandb
 from bsm.models.bayesian_regression_model import BayesianRegressionModel
 from bsm.models.gaussian_processes.kernels import Kernel, RBF
+from bsm.utils.normal_with_aleatoric import ExtendedNormal
 from bsm.utils.normalization import Normalizer, DataStats, Data
 
 
@@ -110,7 +111,7 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         return vmapped_params
 
     @partial(jit, static_argnums=0)
-    def posterior(self, input, gp_model: GPModelState) -> Tuple[distrax.Normal, distrax.Normal]:
+    def posterior(self, input, gp_model: GPModelState) -> Tuple[ExtendedNormal, ExtendedNormal]:
         assert input.ndim == 1
         input_norm = self.normalizer.normalize(input, gp_model.data_stats.inputs)
 
@@ -149,11 +150,12 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         std = self.normalizer.denormalize_std(std, gp_model.data_stats.outputs)
 
         # Distribution of f(x)
-        dist_f = distrax.Normal(loc=mean, scale=std)
+        dist_f = ExtendedNormal(loc=mean, scale=std)
 
         # Distribution of y(x) = f(x) + \epsilon
         std_with_noise = jnp.sqrt(std ** 2 + self.output_stds ** 2)
-        dist_y = distrax.Normal(loc=mean, scale=std_with_noise)
+        # dist_y = distrax.Normal(loc=mean, scale=std_with_noise)
+        dist_y = ExtendedNormal(loc=mean, scale=std_with_noise, aleatoric_std=self.output_stds)
         return dist_f, dist_y
 
 

@@ -325,3 +325,16 @@ if __name__ == '__main__':
         plt.legend(by_label.values(), by_label.keys())
         plt.show()
 
+    for j in range(output_dim):
+        for i in range(num_particles):
+            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+        plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
+        plt.fill_between(test_xs.reshape(-1),
+                         (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
+                         (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
+                         label=r'$2\sigma$', alpha=0.3, color='blue')
+        handles, labels = plt.gca().get_legend_handles_labels()
+        plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
+        by_label = dict(zip(labels, handles))
+        plt.legend(by_label.values(), by_label.keys())
+        plt.show()

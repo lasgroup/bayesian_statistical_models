@@ -142,7 +142,6 @@ if __name__ == '__main__':
                              batch_size=32, key=key, log_training=log_training)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
-    model_state = BNNState(vmapped_params=model_params, data_stats=data_stats)
 
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
@@ -153,6 +152,9 @@ if __name__ == '__main__':
     test_stds = noise_level * jnp.ones(shape=test_ys.shape)
 
     alpha_best = model.calibrate(model_params, test_xs, test_ys_noisy, data_stats)
+
+
+    model_state = BNNState(vmapped_params=model_params, data_stats=data_stats, calibration_alpha=alpha_best)
 
     f_dist, y_dist = vmap(model.posterior, in_axes=(0, None))(test_xs, model_state)
 
@@ -190,24 +192,6 @@ if __name__ == '__main__':
                          (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
                          (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
                          label=r'$2\sigma$', alpha=0.3, color='blue')
-        handles, labels = plt.gca().get_legend_handles_labels()
-        plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
-        by_label = dict(zip(labels, handles))
-        plt.legend(by_label.values(), by_label.keys())
-        plt.show()
-
-    for j in range(output_dim):
-        for i in range(num_particles):
-            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
-        plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
-        plt.fill_between(test_xs.reshape(-1),
-                         (pred_mean[..., j] - 2 * total_calibrated_std[..., j]).reshape(-1),
-                         (pred_mean[..., j] + 2 * total_calibrated_std[..., j]).reshape(-1),
-                         label=r'$2\sigma}$', alpha=0.3, color='yellow')
-        plt.fill_between(test_xs.reshape(-1),
-                         (pred_mean[..., j] - 2 * alpha_best[j] * eps_std[..., j]).reshape(-1),
-                         (pred_mean[..., j] + 2 * alpha_best[j] * eps_std[..., j]).reshape(-1),
-                         label=r'$2\sigma_{eps}$', alpha=0.3, color='blue')
         handles, labels = plt.gca().get_legend_handles_labels()
         plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
         by_label = dict(zip(labels, handles))

@@ -4,6 +4,7 @@ import optax
 from abstract_statistical_model import StatisticalModel
 from bsm.models.gaussian_processes.gaussian_processes import GPModelState, GaussianProcess
 from bsm.models.gaussian_processes.kernels import Kernel
+from bsm.utils.normalization import Data
 from bsm.utils.type_aliases import StatisticalModelState
 
 
@@ -20,5 +21,5 @@ class GPStatisticalModel(StatisticalModel[GPModelState]):
         self.model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, output_stds=output_stds,
                                      kernel=kernel, weight_decay=weight_decay, lr_rate=lr_rate, seed=seed)
 
-    def update(self, model_state: GPModelState, data) -> StatisticalModelState[GPModelState]:
+    def update(self, model_state: GPModelState, data: Data) -> StatisticalModelState[GPModelState]:
         pass

@@ -3,12 +3,13 @@ from functools import partial
 from typing import Tuple
 
 import chex
-import distrax
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import jax.tree_util as jtu
 import optax
 from jax import vmap, jit
+from jax.lax import scan
 from jax.scipy.stats import multivariate_normal
 from jaxtyping import PyTree
 
@@ -34,7 +35,8 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
                  kernel: Kernel | None = None,
                  weight_decay: float = 0.0,
                  lr_rate: optax.Schedule | float = optax.constant_schedule(1e-2),
-                 seed: int = 0
+                 seed: int = 0,
+                 logging_wandb: bool = True
                  ):
         super().__init__(input_dim, output_dim)
         if kernel is None:
@@ -45,6 +47,7 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         self.normalizer = Normalizer()
         self.tx = optax.adamw(learning_rate=lr_rate, weight_decay=weight_decay)
         self.key = jr.PRNGKey(seed)
+        self.logging_wandb = logging_wandb
 
         self.v_kernel = vmap(self.kernel.apply, in_axes=(0, None, None), out_axes=0)
         self.m_kernel = vmap(self.v_kernel, in_axes=(None, 0, None), out_axes=1)
@@ -92,23 +95,27 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         return opt_state, vmapped_params, statiscs
 
     def fit_model(self,
-                  inputs: chex.Array,
-                  target_outputs: chex.Array,
-                  num_epochs: int,
-                  data_stats: DataStats) -> PyTree:
+                  data: Data,
+                  num_epochs: int) -> GPModelState:
         self.key, key = jr.split(self.key)
         vmapped_params = self.init(key)
         opt_state = self.tx.init(vmapped_params)
-        for step in range(1, num_epochs + 1):
-            opt_state, vmapped_params, statistics = self._step_jit(opt_state, vmapped_params, inputs,
-                                                                   target_outputs, data_stats)
+        data_stats = self.normalizer.compute_stats(data)
 
-            wandb.log(statistics)
+        def f(carry, _):
+            opt_state, vmapped_params = carry
+            opt_state, vmapped_params, statistics = self._step_jit(opt_state, vmapped_params, data.inputs,
+                                                                   data.outputs, data_stats)
+            return (opt_state, vmapped_params), statistics
 
-            if step % 100 == 0 or step == 1:
-                print(f"Step {step}: {statistics}")
+        (opt_state, vmapped_params), statistics = scan(f, (opt_state, vmapped_params), None, length=num_epochs)
 
-        return vmapped_params
+        if self.logging_wandb:
+            for i in range(num_epochs):
+                wandb.log(jtu.tree_map(lambda x: x[i], statistics))
+
+        model_state = GPModelState(history=data, data_stats=data_stats, params=vmapped_params)
+        return model_state
 
     @partial(jit, static_argnums=0)
     def posterior(self, input, gp_model: GPModelState) -> Tuple[ExtendedNormal, ExtendedNormal]:
@@ -176,7 +183,6 @@ if __name__ == '__main__':
 
     normalizer = Normalizer()
     data = DataStats(inputs=xs, outputs=ys)
-    data_stats = normalizer.compute_stats(data)
 
     num_particles = 10
     model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, output_stds=data_std)
@@ -187,12 +193,11 @@ if __name__ == '__main__':
         group='test group',
     )
 
-    model_params = model.fit_model(inputs=xs, target_outputs=ys, num_epochs=1000, data_stats=data_stats)
+    model_state = model.fit_model(data=data, num_epochs=1000)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
-    gp_model = GPModelState(history=Data(inputs=xs, outputs=ys), params=model_params, data_stats=data_stats)
-    preds = vmap(model.posterior, in_axes=(0, None))(test_xs, gp_model)[0]
+    preds = vmap(model.posterior, in_axes=(0, None))(test_xs, model_state)[0]
     pred_means = preds.mean()
     epistemic_stds = preds.scale
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(3 * test_xs)], axis=1)

@@ -1,7 +1,8 @@
+import chex
+
 from abstract_statistical_model import StatisticalModel
 from bsm.models.gaussian_processes.gaussian_processes import GPModelState, GaussianProcess
 from bsm.utils.type_aliases import ModelState, StatisticalModelOutput
-import chex
 
 
 class GPStatisticalModel(StatisticalModel[GPModelState]):

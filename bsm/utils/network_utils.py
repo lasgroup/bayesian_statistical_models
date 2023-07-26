@@ -1,8 +1,8 @@
 from typing import Sequence, Optional, Callable
 
 import jax
-from flax import linen as nn
 import jax.numpy as jnp
+from flax import linen as nn
 
 
 class MLP(nn.Module):

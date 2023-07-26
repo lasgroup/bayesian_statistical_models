@@ -11,8 +11,6 @@ from jax import random, vmap
 from jaxtyping import PyTree
 
 from bsm.models.neural_networks.deterministic_ensembles import DeterministicEnsemble, fit_model, BNNState
-from bsm.utils.mlp import MLP
-import wandb
 from bsm.utils.network_utils import MLP
 from bsm.utils.normalization import Normalizer, DataStats
 

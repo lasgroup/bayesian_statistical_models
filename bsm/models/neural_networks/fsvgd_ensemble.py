@@ -2,17 +2,17 @@ import time
 from typing import Dict
 
 import chex
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import wandb
 from jax import random, vmap
 from jaxtyping import PyTree
-import flax.linen as nn
 
-import wandb
-from bsm.utils.normalization import Normalizer, DataStats
 from bsm.models.neural_networks.deterministic_ensembles import fit_model, DeterministicEnsemble, BNNState
 from bsm.models.neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
+from bsm.utils.normalization import Normalizer, DataStats
 
 
 def prepare_stein_kernel(h=0.2 ** 2):
@@ -142,7 +142,6 @@ if __name__ == '__main__':
                              batch_size=32, key=key, log_training=log_training)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
-
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
 
@@ -152,7 +151,6 @@ if __name__ == '__main__':
     test_stds = noise_level * jnp.ones(shape=test_ys.shape)
 
     alpha_best = model.calibrate(model_params, test_xs, test_ys_noisy, data_stats)
-
 
     model_state = BNNState(vmapped_params=model_params, data_stats=data_stats, calibration_alpha=alpha_best)
 

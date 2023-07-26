@@ -39,8 +39,10 @@ class ParticleDistribution(Distribution):
 
     def stddev(self) -> chex.Array:
         # Total std is sqrt of variance of particles and mean of aleatoric stds
-        total_std = jnp.sqrt(jnp.std(self._particles, axis=-2) ** 2 + jnp.mean(self._aleatoric_stds, axis=-2) ** 2)
-        return total_std * self._calibration_alpha
+        eps_var = (jnp.std(self._particles, axis=-2) * self._calibration_alpha) ** 2
+        ale_var = jnp.mean(self._aleatoric_stds ** 2, axis=-2)
+        total_std = jnp.sqrt(eps_var + ale_var)
+        return total_std
 
     def median(self) -> chex.Array:
         return jnp.median(self._particles, axis=-2)

@@ -198,8 +198,8 @@ class DeterministicEnsemble(BayesianRegressionModel[BNNState]):
             predicted_outputs, predicted_stds = vmap(self.apply_eval, in_axes=(0, None, None), out_axes=0)(
                 vmapped_params, x, data_stats)
             means, epistemic_stds = predicted_outputs.mean(axis=0), predicted_outputs.std(axis=0)
-            aleatoric_stds = predicted_stds.mean(axis=0)
-            std = jnp.sqrt((epistemic_stds * alpha) ** 2 + aleatoric_stds ** 2)
+            aleatoric_var = (predicted_stds ** 2).mean(axis=0)
+            std = jnp.sqrt((epistemic_stds * alpha) ** 2 + aleatoric_var)
             chex.assert_shape(std, (self.output_dim,))
             cdfs = vmap(norm.cdf)(y, means, std)
 

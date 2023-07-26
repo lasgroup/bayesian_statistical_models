@@ -11,7 +11,7 @@ import flax.linen as nn
 
 import wandb
 from bsm.utils.normalization import Normalizer, DataStats
-from bsm.models.neural_networks.deterministic_ensembles import fit_model, DeterministicEnsemble
+from bsm.models.neural_networks.deterministic_ensembles import fit_model, DeterministicEnsemble, BNNState
 from bsm.models.neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
 
 
@@ -142,6 +142,8 @@ if __name__ == '__main__':
                              batch_size=32, key=key, log_training=log_training)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
+    model_state = BNNState(vmapped_params=model_params, data_stats=data_stats)
+
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
 
@@ -151,19 +153,39 @@ if __name__ == '__main__':
     test_stds = noise_level * jnp.ones(shape=test_ys.shape)
 
     alpha_best = model.calibration(model_params, test_xs, test_ys_noisy, data_stats)
-    apply_ens = vmap(model.apply_eval, in_axes=(None, 0, None))
-    preds, aleatoric_stds = vmap(apply_ens, in_axes=(0, None, None))(model_params, test_xs, data_stats)
-    pred_mean = jnp.mean(preds, axis=0)
-    eps_std = jnp.std(preds, axis=0)
-    al_std = jnp.mean(aleatoric_stds, axis=0)
+
+    f_dist, y_dist = vmap(model.posterior, in_axes=(0, None))(test_xs, model_state)
+
+    pred_mean = f_dist.mean()
+    eps_std = f_dist.stddev()
+    al_std = jnp.mean(y_dist.aleatoric_stds(), axis=1)
     total_std = jnp.sqrt(jnp.square(eps_std) + jnp.square(al_std))
+
+    out = f_dist.sample(seed=jax.random.PRNGKey(0), sample_shape=10)
+
     total_calibrated_std = jax.vmap(lambda x, y, z: jnp.sqrt(jnp.square(x * z) + jnp.square(y)), in_axes=(-1, -1, -1),
                                     out_axes=-1)(eps_std, al_std, alpha_best)
+
     for j in range(output_dim):
         plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
         for i in range(num_particles):
-            plt.plot(test_xs, preds[i, :, j], label='NN prediction', color='black', alpha=0.3)
-        plt.plot(test_xs, jnp.mean(preds[..., j], axis=0), label='Mean', color='blue')
+            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+        plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
+        plt.fill_between(test_xs.reshape(-1),
+                         (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
+                         (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
+                         label=r'$2\sigma$', alpha=0.3, color='blue')
+        handles, labels = plt.gca().get_legend_handles_labels()
+        plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
+        by_label = dict(zip(labels, handles))
+        plt.legend(by_label.values(), by_label.keys())
+        plt.show()
+
+    for j in range(output_dim):
+        # plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
+        for i in range(num_particles):
+            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+        plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
                          (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
                          (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
@@ -176,22 +198,8 @@ if __name__ == '__main__':
 
     for j in range(output_dim):
         for i in range(num_particles):
-            plt.plot(test_xs, preds[i, :, j], label='NN prediction', color='black', alpha=0.3)
-        plt.plot(test_xs, jnp.mean(preds[..., j], axis=0), label='Mean', color='blue')
-        plt.fill_between(test_xs.reshape(-1),
-                         (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
-                         (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
-                         label=r'$2\sigma$', alpha=0.3, color='blue')
-        handles, labels = plt.gca().get_legend_handles_labels()
-        plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
-        by_label = dict(zip(labels, handles))
-        plt.legend(by_label.values(), by_label.keys())
-        plt.show()
-
-    for j in range(output_dim):
-        for i in range(num_particles):
-            plt.plot(test_xs, preds[i, :, j], label='NN prediction', color='black', alpha=0.3)
-        plt.plot(test_xs, jnp.mean(preds[..., j], axis=0), label='Mean', color='blue')
+            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+        plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
                          (pred_mean[..., j] - 2 * total_calibrated_std[..., j]).reshape(-1),
                          (pred_mean[..., j] + 2 * total_calibrated_std[..., j]).reshape(-1),

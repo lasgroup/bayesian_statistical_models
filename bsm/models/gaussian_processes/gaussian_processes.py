@@ -13,6 +13,7 @@ from jax.scipy.stats import multivariate_normal
 from jaxtyping import PyTree
 
 import wandb
+from bsm.models.bayesian_regression_model import BayesianRegressionModel
 from bsm.models.gaussian_processes.kernels import Kernel, RBF
 from bsm.utils.normalization import Normalizer, DataStats, Data
 
@@ -24,7 +25,7 @@ class GPModelState:
     params: PyTree
 
 
-class GaussianProcess:
+class GaussianProcess(BayesianRegressionModel[GPModelState]):
     def __init__(self,
                  input_dim: int,
                  output_dim: int,
@@ -34,8 +35,7 @@ class GaussianProcess:
                  lr_rate: optax.Schedule | float = optax.constant_schedule(1e-2),
                  seed: int = 0
                  ):
-        self.input_dim = input_dim
-        self.output_dim = output_dim
+        super().__init__(input_dim, output_dim)
         if kernel is None:
             kernel = RBF(input_dim)
         self.kernel = kernel

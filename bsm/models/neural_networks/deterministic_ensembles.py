@@ -13,6 +13,7 @@ from jax import random, vmap, jit
 from jax.scipy.stats import norm
 from jaxtyping import PyTree
 
+from bsm.models.bayesian_regression_model import BayesianRegressionModel
 from bsm.utils.mlp import MLP
 from bsm.utils.normalization import Normalizer, DataStats
 from bsm.utils.particle_distribution import ParticleDistribution
@@ -24,7 +25,7 @@ class BNNState:
     data_stats: DataStats
 
 
-class DeterministicEnsemble:
+class DeterministicEnsemble(BayesianRegressionModel[BNNState]):
     def __init__(self,
                  input_dim: int,
                  output_dim: int,
@@ -35,8 +36,7 @@ class DeterministicEnsemble:
                  lr_rate: optax.Schedule | float = optax.constant_schedule(1e-3),
                  num_calibration_ps: int = 10,
                  num_test_alphas: int = 100):
-        self.input_dim = input_dim
-        self.output_dim = output_dim
+        super().__init__(input_dim, output_dim)
         self.num_particles = num_particles
         assert output_stds.shape == (output_dim,)
         self.output_stds = output_stds

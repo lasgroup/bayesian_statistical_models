@@ -2,9 +2,7 @@ from typing import TypeVar, Generic
 
 import chex
 
-from bsm.models.gaussian_processes.gaussian_processes import GPModelState
-
-ModelState = TypeVar('ModelState', GPModelState, chex.dataclass)
+ModelState = TypeVar('ModelState')
 
 EpistemicStd = chex.Array
 AleatoricStd = chex.Array

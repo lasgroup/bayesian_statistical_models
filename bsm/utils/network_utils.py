@@ -23,8 +23,8 @@ class MLP(nn.Module):
 class GRUModel(nn.Module):
     features: Sequence[int]
     output_dim: Optional[int]
-    activation: Callable = nn.swish
     hidden_size: int
+    activation: Callable = nn.swish
 
     @nn.compact
     def __call__(self, x: jax.Array, hidden_state: jax.Array, train: bool = False):
@@ -43,8 +43,8 @@ class GRUModel(nn.Module):
 class LSTMModel(nn.Module):
     features: Sequence[int]
     output_dim: Optional[int]
-    activation: Callable = nn.swish
     hidden_size: int
+    activation: Callable = nn.swish
 
     @nn.compact
     def __call__(self, x: jax.Array, hidden_state: jax.Array, cell_state: jax.Array, train: bool = False):

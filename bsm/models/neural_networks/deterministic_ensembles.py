@@ -17,7 +17,7 @@ from jaxtyping import PyTree
 
 
 import wandb
-from bsm.utils.mlp import MLP
+from bsm.utils.network_utils import MLP
 from bsm.utils.normalization import Normalizer, DataStats
 
 

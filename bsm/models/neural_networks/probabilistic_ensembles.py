@@ -10,7 +10,7 @@ from jaxtyping import PyTree
 import flax.linen as nn
 
 import wandb
-from bsm.utils.mlp import MLP
+from bsm.utils.network_utils import MLP
 from bsm.utils.normalization import Normalizer, DataStats
 from bsm.models.neural_networks.deterministic_ensembles import DeterministicEnsemble, fit_model
 

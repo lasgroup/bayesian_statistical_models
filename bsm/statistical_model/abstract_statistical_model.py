@@ -3,11 +3,13 @@ from typing import Generic
 
 import chex
 
+from bsm.models.bayesian_regression_model import BayesianRegressionModel
 from bsm.utils.type_aliases import ModelState, StatisticalModelOutput, StatisticalModelState
 
 
 class StatisticalModel(ABC, Generic[ModelState]):
-    def __init__(self, input_dim: int, output_dim: int, ):
+    def __init__(self, input_dim: int, output_dim: int, model: BayesianRegressionModel):
+        self._model = model
         self.input_dim = input_dim
         self.output_dim = output_dim
 
@@ -20,11 +22,14 @@ class StatisticalModel(ABC, Generic[ModelState]):
         assert outs.epistemic_std.shape == outs.aleatoric_std.shape == (self.output_dim,)
         return outs
 
-    @abstractmethod
     def _apply(self,
                input: chex.Array,
                statistical_model_state: StatisticalModelState[ModelState]) -> StatisticalModelOutput[ModelState]:
-        pass
+        dist_f, dist_y = self._model.posterior(input, statistical_model_state.model_state)
+        statistical_model = StatisticalModelOutput(mean=dist_f.mean(), epistemic_std=dist_f.stddev(),
+                                                   aleatoric_std=dist_y.aleatoric_std(),
+                                                   statistical_model_state=statistical_model_state)
+        return statistical_model
 
     @abstractmethod
     def update(self,

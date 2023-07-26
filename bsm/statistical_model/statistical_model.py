@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Generic
 
-from utils.type_aliases import ModelState, StatisticalModelOutput
+from bsm.utils.type_aliases import ModelState, StatisticalModelOutput
 
 
 class StatisticalModel(ABC, Generic[ModelState]):

@@ -17,8 +17,8 @@ from jax.scipy.stats import norm
 from jaxtyping import PyTree
 
 import wandb
-from utils.mlp import MLP
-from utils.normalization import Normalizer, DataStats
+from bsm.utils.mlp import MLP
+from bsm.utils.normalization import Normalizer, DataStats
 
 
 class DeterministicEnsemble:

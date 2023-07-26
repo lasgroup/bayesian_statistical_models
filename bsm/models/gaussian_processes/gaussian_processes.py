@@ -7,18 +7,17 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
+import wandb
 from jax import vmap, jit
 from jax.scipy.stats import multivariate_normal
 from jaxtyping import PyTree
 
-import wandb
-from models.gaussian_processes.kernels import Kernel, RBF
-from utils import type_aliases
-from utils.normalization import Normalizer, DataStats, Data
+from bsm.models.gaussian_processes.kernels import Kernel, RBF
+from bsm.utils.normalization import Normalizer, DataStats, Data
 
 
 @chex.dataclass
-class GPModelState(type_aliases.ModelState):
+class GPModelState:
     history: Data
     data_stats: DataStats
     params: PyTree

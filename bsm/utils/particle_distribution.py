@@ -7,10 +7,17 @@ from distrax import Distribution, Normal
 
 
 class ParticleDistribution(Distribution):
-    def __init__(self, particles: chex.Array, aleatoric_stds: chex.Array | None = None):
+    def __init__(self,
+                 particles: chex.Array,
+                 aleatoric_stds: chex.Array | None = None,
+                 calibration_alpha: chex.Array | None = None):
         self._particles = particles
         assert self._particles.ndim == 2
         self._num_particles, self._dim = self._particles.shape
+
+        if calibration_alpha is None:
+            calibration_alpha = jnp.ones(shape=(self._dim,))
+        self._calibration_alpha = calibration_alpha
 
         if aleatoric_stds is None:
             aleatoric_stds = jnp.zeros(shape=(self._num_particles, self._dim))
@@ -23,17 +30,17 @@ class ParticleDistribution(Distribution):
             We sample f from the normal approximation and then add average aleatoric noise to it.
         """
         key_f, key_noise = jr.split(key)
-        f_samples = self._normal_approx._sample_n(key=key_f, n=n)
-        noise_samples = jr.normal(key_noise, shape=f_samples.shape) * jnp.mean(self._aleatoric_stds, axis=-2)[None, ...]
-        y_samples = f_samples + noise_samples
-        assert y_samples.shape[-1] == self._dim and y_samples.shape[0] == n
-        return y_samples
+        samples = self._normal_approx._sample_n(key=key_f, n=n)
+        assert samples.shape[-1] == self._dim and samples.shape[0] == n
+        return samples
 
     def mean(self) -> chex.Array:
         return jnp.mean(self._particles, axis=-2)
 
     def stddev(self) -> chex.Array:
-        return jnp.std(self._particles, axis=-2)
+        # Total std is sqrt of variance of particles and mean of aleatoric stds
+        total_std = jnp.sqrt(jnp.std(self._particles, axis=-2) ** 2 + jnp.mean(self._aleatoric_stds, axis=-2) ** 2)
+        return total_std * self._calibration_alpha
 
     def median(self) -> chex.Array:
         return jnp.median(self._particles, axis=-2)

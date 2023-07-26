@@ -152,7 +152,7 @@ if __name__ == '__main__':
 
     test_stds = noise_level * jnp.ones(shape=test_ys.shape)
 
-    alpha_best = model.calibration(model_params, test_xs, test_ys_noisy, data_stats)
+    alpha_best = model.calibrate(model_params, test_xs, test_ys_noisy, data_stats)
 
     f_dist, y_dist = vmap(model.posterior, in_axes=(0, None))(test_xs, model_state)
 

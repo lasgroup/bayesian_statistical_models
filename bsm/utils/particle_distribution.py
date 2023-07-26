@@ -24,32 +24,40 @@ class ParticleDistribution(Distribution):
         """
         key_f, key_noise = jr.split(key)
         f_samples = self._normal_approx._sample_n(key=key_f, n=n)
-        noise_samples = jr.normal(key_noise, shape=(n, self._dim)) * jnp.mean(self._aleatoric_stds)[None, ...]
+        noise_samples = jr.normal(key_noise, shape=f_samples.shape) * jnp.mean(self._aleatoric_stds, axis=-2)[None, ...]
         y_samples = f_samples + noise_samples
-        assert y_samples.shape == (n, self._dim)
+        assert y_samples.shape[-1] == self._dim and y_samples.shape[0] == n
         return y_samples
 
     def mean(self) -> chex.Array:
-        return jnp.mean(self._particles, axis=0)
+        return jnp.mean(self._particles, axis=-2)
 
     def stddev(self) -> chex.Array:
-        return jnp.std(self._particles, axis=0)
+        return jnp.std(self._particles, axis=-2)
 
     def median(self) -> chex.Array:
-        return jnp.median(self._particles, axis=0)
+        return jnp.median(self._particles, axis=-2)
 
     def log_prob(self, value: chex.Array) -> chex.Array:
         return self._normal_approx.log_prob(value)
 
     def event_shape(self) -> Tuple[int, ...]:
-        return (self._dim,)
+        particles_shape = list(self._particles.shape)
+        del particles_shape[-2]
+        return tuple(particles_shape)
 
     def sample_particle(self, seed: chex.PRNGKey) -> chex.Array:
         key_idx, key_noise = jr.split(seed)
         particle_idx = jr.randint(key_idx, shape=(), minval=0, maxval=self._num_particles)
-        f_sample = self._particles[particle_idx]
-        noise = jr.normal(key_noise, shape=(self._dim,)) * self._aleatoric_stds[particle_idx]
+        f_sample = self._particles[..., particle_idx, :]
+        noise = jr.normal(key_noise, shape=f_sample.shape) * self._aleatoric_stds[..., particle_idx, :]
         return f_sample + noise
+
+    def particles(self) -> chex.Array:
+        return self._particles
+
+    def aleatoric_stds(self) -> chex.Array:
+        return self._aleatoric_stds
 
 
 if __name__ == '__main__':

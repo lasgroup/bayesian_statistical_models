@@ -1,24 +1,27 @@
 import time
 from collections import OrderedDict
 from functools import partial
-from typing import Sequence, Dict
+from typing import Sequence, Dict, Tuple
 
 import chex
 import jax
 import jax.numpy as jnp
-import jax.random as jr
-import jax.tree_util as jtu
 import matplotlib.pyplot as plt
 import optax
+import wandb
 from jax import random, vmap, jit
-from jax.lax import scan
 from jax.scipy.stats import norm
 from jaxtyping import PyTree
 
-
-import wandb
 from bsm.utils.mlp import MLP
 from bsm.utils.normalization import Normalizer, DataStats
+from bsm.utils.particle_distribution import ParticleDistribution
+
+
+@chex.dataclass
+class BNNState:
+    vmapped_params: PyTree
+    data_stats: DataStats
 
 
 class DeterministicEnsemble:
@@ -42,6 +45,15 @@ class DeterministicEnsemble:
         self.normalizer = Normalizer()
         self.num_calibration_ps = num_calibration_ps
         self.num_test_alphas = num_test_alphas
+
+    @partial(jit, static_argnums=(0,))
+    def posterior(self, input: chex.Array, bnn_state: BNNState) -> Tuple[ParticleDistribution, ParticleDistribution]:
+        """Computes the posterior distribution of the ensemble given the input and the data statistics."""
+        chex.assert_shape(input, (self.input_dim,))
+        v_apply = vmap(self._apply_train, in_axes=(0, None, None), out_axes=0)
+        means, aleatoric_stds = v_apply(bnn_state.vmapped_params, input, bnn_state.data_stats)
+        assert means.shape == aleatoric_stds.shape == (self.num_particles, self.output_dim)
+        return ParticleDistribution(means), ParticleDistribution(means, aleatoric_stds)
 
     def _apply_train(self,
                      params: PyTree,
@@ -269,6 +281,8 @@ if __name__ == '__main__':
                              batch_size=32, key=key, log_training=log_training)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
+    bnn_state = BNNState(vmapped_params=model_params, data_stats=data_stats)
+
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
 
@@ -278,19 +292,23 @@ if __name__ == '__main__':
     test_stds = noise_level * jnp.ones(shape=test_ys.shape)
 
     alpha_best = model.calibration(model_params, test_xs, test_ys_noisy, data_stats)
-    apply_ens = vmap(model.apply_eval, in_axes=(None, 0, None))
-    preds, aleatoric_stds = vmap(apply_ens, in_axes=(0, None, None))(model_params, test_xs, data_stats)
-    pred_mean = jnp.mean(preds, axis=0)
-    eps_std = jnp.std(preds, axis=0)
-    al_std = jnp.mean(aleatoric_stds, axis=0)
+    f_dist, y_dist = vmap(model.posterior, in_axes=(0, None))(test_xs, bnn_state)
+
+    pred_mean = f_dist.mean()
+    eps_std = f_dist.stddev()
+    al_std = jnp.mean(y_dist.aleatoric_stds(), axis=1)
     total_std = jnp.sqrt(jnp.square(eps_std) + jnp.square(al_std))
+
+    out = f_dist.sample(seed=jax.random.PRNGKey(0), sample_shape=10)
+
     total_calibrated_std = jax.vmap(lambda x, y, z: jnp.sqrt(jnp.square(x * z) + jnp.square(y)), in_axes=(-1, -1, -1),
                                     out_axes=-1)(eps_std, al_std, alpha_best)
+
     for j in range(output_dim):
         plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
         for i in range(num_particles):
-            plt.plot(test_xs, preds[i, :, j], label='NN prediction', color='black', alpha=0.3)
-        plt.plot(test_xs, jnp.mean(preds[..., j], axis=0), label='Mean', color='blue')
+            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+        plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
                          (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
                          (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
@@ -304,8 +322,8 @@ if __name__ == '__main__':
     for j in range(output_dim):
         # plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
         for i in range(num_particles):
-            plt.plot(test_xs, preds[i, :, j], label='NN prediction', color='black', alpha=0.3)
-        plt.plot(test_xs, jnp.mean(preds[..., j], axis=0), label='Mean', color='blue')
+            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+        plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
                          (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
                          (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
@@ -318,8 +336,8 @@ if __name__ == '__main__':
 
     for j in range(output_dim):
         for i in range(num_particles):
-            plt.plot(test_xs, preds[i, :, j], label='NN prediction', color='black', alpha=0.3)
-        plt.plot(test_xs, jnp.mean(preds[..., j], axis=0), label='Mean', color='blue')
+            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+        plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
                          (pred_mean[..., j] - 2 * total_calibrated_std[..., j]).reshape(-1),
                          (pred_mean[..., j] + 2 * total_calibrated_std[..., j]).reshape(-1),

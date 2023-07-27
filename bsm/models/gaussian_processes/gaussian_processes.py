@@ -180,8 +180,6 @@ if __name__ == '__main__':
     ys = jnp.concatenate([jnp.sin(xs), jnp.cos(3 * xs)], axis=1)
     ys = ys + noise_level * jr.normal(key=jr.PRNGKey(0), shape=ys.shape)
     data_std = noise_level * jnp.ones(shape=(output_dim,))
-
-    normalizer = Normalizer()
     data = DataStats(inputs=xs, outputs=ys)
 
     num_particles = 10

@@ -10,8 +10,9 @@ import wandb
 from jax import random, vmap
 from jaxtyping import PyTree
 
-from bsm.models.neural_networks.deterministic_ensembles import fit_model, DeterministicEnsemble, BNNState
-from bsm.models.neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
+from bsm.models.bayesian_neural_networks.deterministic_ensembles import fit_model, DeterministicEnsemble
+from bsm.models.bayesian_neural_networks.bnn import BNNState
+from bsm.models.bayesian_neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
 from bsm.utils.normalization import Normalizer, DataStats
 
 

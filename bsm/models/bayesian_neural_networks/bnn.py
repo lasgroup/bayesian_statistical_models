@@ -1,21 +1,26 @@
-import time
+from abc import abstractmethod
 from collections import OrderedDict
 from functools import partial
-from typing import Sequence, Dict, Tuple
+from typing import Dict, Tuple
+from typing import Sequence
 
 import chex
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
+import jax.random as jr
+import jax.tree_util as jtu
 import optax
-import wandb
-from jax import random, vmap, jit
+from brax.training.replay_buffers import UniformSamplingQueue
+from jax import jit
+from jax import vmap
+from jax.lax import scan
 from jax.scipy.stats import norm
 from jaxtyping import PyTree
 
+import wandb
 from bsm.models.bayesian_regression_model import BayesianRegressionModel
 from bsm.utils.network_utils import MLP
-from bsm.utils.normalization import Normalizer, DataStats
+from bsm.utils.normalization import Normalizer, DataStats, Data
 from bsm.utils.particle_distribution import ParticleDistribution
 
 
@@ -26,26 +31,29 @@ class BNNState:
     calibration_alpha: chex.Array
 
 
-class DeterministicEnsemble(BayesianRegressionModel[BNNState]):
+class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
     def __init__(self,
                  input_dim: int,
                  output_dim: int,
                  features: Sequence[int],
                  num_particles: int,
-                 output_stds: chex.Array,
                  weight_decay: float = 1.0,
                  lr_rate: optax.Schedule | float = optax.constant_schedule(1e-3),
                  num_calibration_ps: int = 10,
-                 num_test_alphas: int = 100):
+                 num_test_alphas: int = 100,
+                 logging_wandb: bool = True,
+                 batch_size: int = 32,
+                 seed: int = 0):
         super().__init__(input_dim, output_dim)
         self.num_particles = num_particles
-        assert output_stds.shape == (output_dim,)
-        self.output_stds = output_stds
         self.model = MLP(features=features, output_dim=self.output_dim)
         self.tx = optax.adamw(learning_rate=lr_rate, weight_decay=weight_decay)
         self.normalizer = Normalizer()
         self.num_calibration_ps = num_calibration_ps
         self.num_test_alphas = num_test_alphas
+        self.logging_wandb = logging_wandb
+        self.batch_size = batch_size
+        self.key = jr.PRNGKey(seed)
 
     @partial(jit, static_argnums=(0,))
     def posterior(self, input: chex.Array, bnn_state: BNNState) -> Tuple[ParticleDistribution, ParticleDistribution]:
@@ -58,23 +66,19 @@ class DeterministicEnsemble(BayesianRegressionModel[BNNState]):
         y_dist = ParticleDistribution(means, aleatoric_stds, calibration_alpha=bnn_state.calibration_alpha)
         return f_dist, y_dist
 
+    @abstractmethod
     def _apply_train(self,
                      params: PyTree,
                      x: chex.Array,
                      data_stats: DataStats) -> [chex.Array, chex.Array]:
-        chex.assert_shape(x, (self.input_dim,))
-        x = self.normalizer.normalize(x, data_stats.inputs)
-        return self.model.apply({'params': params}, x), self.normalizer.normalize_std(self.output_stds,
-                                                                                      data_stats.outputs)
+        pass
 
+    @abstractmethod
     def apply_eval(self,
                    params: PyTree,
                    x: chex.Array,
                    data_stats: DataStats) -> [chex.Array, chex.Array]:
-        chex.assert_shape(x, (self.input_dim,))
-        x = self.normalizer.normalize(x, data_stats.inputs)
-        out = self.model.apply({'params': params}, x)
-        return self.normalizer.denormalize(out, data_stats.outputs), self.output_stds
+        pass
 
     def _nll(self,
              predicted_outputs: chex.Array,
@@ -146,7 +150,7 @@ class DeterministicEnsemble(BayesianRegressionModel[BNNState]):
         return params
 
     def init(self, key):
-        keys = random.split(key, self.num_particles)
+        keys = jr.split(key, self.num_particles)
         return vmap(self._init)(keys)
 
     def calibrate(self,
@@ -212,129 +216,34 @@ class DeterministicEnsemble(BayesianRegressionModel[BNNState]):
         cdfs = vmap(calculate_score)(inputs, outputs)
         return jnp.mean(cdfs, axis=0)
 
+    def fit_model(self, data: Data, num_epochs: int) -> BNNState:
+        self.key, key = jr.split(self.key)
+        vmapped_params = self.init(key)
+        opt_state = self.tx.init(vmapped_params)
+        data_stats = self.normalizer.compute_stats(data)
 
-def dataset(key: jax.random.PRNGKey, x: jax.Array, y: jax.Array, batch_size: int):
-    ids = jnp.arange(len(x))
-    while True:
-        sample_key, key = jax.random.split(key, 2)
-        ids = jax.random.choice(sample_key, ids, shape=(batch_size,), replace=False)
-        yield x[ids], y[ids]
+        num_points = data.inputs.shape[0]
+        dummy_data_sample = jtu.tree_map(lambda x: x[0], data)
+        buffer = UniformSamplingQueue(max_replay_size=num_points, dummy_data_sample=dummy_data_sample,
+                                      sample_batch_size=self.batch_size)
 
+        self.key, key = jr.split(self.key)
+        buffer_state = buffer.init(key)
+        buffer_state = buffer.insert(buffer_state, data)
 
-def fit_model(model: DeterministicEnsemble,
-              inputs: chex.Array,
-              outputs: chex.Array,
-              num_epochs: int,
-              data_stats: DataStats,
-              batch_size: int,
-              key: jax.random.PRNGKey,
-              log_training: bool = False):
-    key, init_key = random.split(key)
-    vmapped_params = model.init(key)
-    opt_state = model.tx.init(vmapped_params)
-    key, shuffle_key = random.split(key)
-    data = iter(dataset(key, inputs, outputs, batch_size))
-    num_train_steps = len(inputs) * num_epochs
-    for step in range(num_train_steps):
-        key, subkey = random.split(key)
-        inputs_batch, target_outputs_batch = next(data)
-        opt_state, vmapped_params, statistics = model.step_jit(opt_state, vmapped_params, inputs_batch,
-                                                               target_outputs_batch, data_stats)
-        if log_training:
-            wandb.log(statistics)
-        if step >= num_epochs:
-            break
+        def f(carry, _):
+            opt_state, vmapped_params, buffer_state = carry
+            new_buffer_state, data_batch = buffer.sample(buffer_state)
+            opt_state, vmapped_params, statistics = self.step_jit(opt_state, vmapped_params, data_batch.inputs,
+                                                                  data_batch.outputs, data_stats)
+            return (opt_state, vmapped_params, new_buffer_state), statistics
 
-        if step % 100 == 0 or step == 1:
-            statistics = model.eval_ll(vmapped_params, inputs_batch, target_outputs_batch, data_stats)
-            print(f"Step {step}: {statistics}")
-
-    return vmapped_params
-
-
-if __name__ == '__main__':
-    key = random.PRNGKey(0)
-    log_training = False
-    input_dim = 1
-    output_dim = 2
-
-    noise_level = 0.1
-    d_l, d_u = 0, 10
-    xs = jnp.linspace(d_l, d_u, 256).reshape(-1, 1)
-    ys = jnp.concatenate([jnp.sin(xs), jnp.cos(xs)], axis=1)
-    ys = ys + noise_level * random.normal(key=random.PRNGKey(0), shape=ys.shape)
-    data_std = noise_level * jnp.ones(shape=(output_dim,))
-
-    normalizer = Normalizer()
-    data = DataStats(inputs=xs, outputs=ys)
-    data_stats = normalizer.compute_stats(data)
-
-    num_particles = 10
-    model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
-                                  num_particles=num_particles, output_stds=data_std)
-    start_time = time.time()
-    print('Starting with training')
-    if log_training:
-        wandb.init(
-            project='Pendulum',
-            group='test group',
-        )
-
-    model_params = fit_model(model=model, inputs=xs, outputs=ys, num_epochs=1000, data_stats=data_stats,
-                             batch_size=32, key=key, log_training=log_training)
-    print(f'Training time: {time.time() - start_time:.2f} seconds')
-
-    test_xs = jnp.linspace(-3, 13, 1000).reshape(-1, 1)
-    test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
-
-    test_ys_noisy = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1) + noise_level * random.normal(
-        key=random.PRNGKey(0), shape=test_ys.shape)
-
-    test_stds = noise_level * jnp.ones(shape=test_ys.shape)
-
-    alpha_best = model.calibrate(model_params, test_xs, test_ys_noisy, data_stats)
-
-    bnn_state = BNNState(vmapped_params=model_params, data_stats=data_stats,
-                         calibration_alpha=alpha_best)
-
-    f_dist, y_dist = vmap(model.posterior, in_axes=(0, None))(test_xs, bnn_state)
-
-    pred_mean = f_dist.mean()
-    eps_std = f_dist.stddev()
-    al_std = jnp.mean(y_dist.aleatoric_stds(), axis=1)
-    total_std = jnp.sqrt(jnp.square(eps_std) + jnp.square(al_std))
-
-    out = f_dist.sample(seed=jax.random.PRNGKey(0), sample_shape=10)
-    out = f_dist.sample_particle(seed=jax.random.PRNGKey(0))
-
-    total_calibrated_std = jax.vmap(lambda x, y, z: jnp.sqrt(jnp.square(x * z) + jnp.square(y)), in_axes=(-1, -1, -1),
-                                    out_axes=-1)(eps_std, al_std, alpha_best)
-
-    for j in range(output_dim):
-        plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
-        for i in range(num_particles):
-            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
-        plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
-        plt.fill_between(test_xs.reshape(-1),
-                         (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
-                         (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
-                         label=r'$2\sigma$', alpha=0.3, color='blue')
-        handles, labels = plt.gca().get_legend_handles_labels()
-        plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
-        by_label = dict(zip(labels, handles))
-        plt.legend(by_label.values(), by_label.keys())
-        plt.show()
-
-    for j in range(output_dim):
-        for i in range(num_particles):
-            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
-        plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
-        plt.fill_between(test_xs.reshape(-1),
-                         (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
-                         (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
-                         label=r'$2\sigma$', alpha=0.3, color='blue')
-        handles, labels = plt.gca().get_legend_handles_labels()
-        plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
-        by_label = dict(zip(labels, handles))
-        plt.legend(by_label.values(), by_label.keys())
-        plt.show()
+        init_carry = (opt_state, vmapped_params, buffer_state)
+        (opt_state, vmapped_params, buffer_state), statistics = scan(f, init_carry, None, length=num_epochs)
+        if self.logging_wandb:
+            for i in range(num_epochs):
+                wandb.log(jtu.tree_map(lambda x: x[i], statistics))
+        calibrate_alpha = self.calibrate(vmapped_params, data.inputs, data.outputs, data_stats)
+        model_state = BNNState(data_stats=data_stats, vmapped_params=vmapped_params,
+                               calibration_alpha=calibrate_alpha)
+        return model_state

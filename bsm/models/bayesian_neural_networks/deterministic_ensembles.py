@@ -2,25 +2,37 @@ import time
 from typing import Sequence
 
 import chex
-import flax.linen as nn
-import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-import wandb
+import optax
 from jax import random, vmap
 from jaxtyping import PyTree
 
-from bsm.models.neural_networks.deterministic_ensembles import DeterministicEnsemble, fit_model, BNNState
-from bsm.utils.network_utils import MLP
-from bsm.utils.normalization import Normalizer, DataStats
+import wandb
+from bsm.models.bayesian_neural_networks.bnn import BayesianNeuralNet
+from bsm.utils.normalization import Normalizer, DataStats, Data
 
 
-class ProbabilisticEnsemble(DeterministicEnsemble):
-    def __init__(self, features: Sequence[int], sig_min: float = 1e-3, sig_max: float = 1e3, *args, **kwargs):
-        super().__init__(features=features, *args, **kwargs)
-        self.model = MLP(features=features, output_dim=2 * self.output_dim)
-        self.sig_min = sig_min
-        self.sig_max = sig_max
+class DeterministicEnsemble(BayesianNeuralNet):
+    def __init__(self,
+                 input_dim: int,
+                 output_dim: int,
+                 features: Sequence[int],
+                 num_particles: int,
+                 output_stds: chex.Array,
+                 weight_decay: float = 1.0,
+                 lr_rate: optax.Schedule | float = optax.constant_schedule(1e-3),
+                 num_calibration_ps: int = 10,
+                 num_test_alphas: int = 100,
+                 batch_size: int = 64,
+                 seed: int = 0,
+                 logging_wandb: bool = True, ):
+        super().__init__(input_dim=input_dim, output_dim=output_dim, features=features,
+                         num_particles=num_particles, seed=seed, weight_decay=weight_decay, lr_rate=lr_rate,
+                         batch_size=batch_size, num_calibration_ps=num_calibration_ps, num_test_alphas=num_test_alphas,
+                         logging_wandb=logging_wandb)
+        assert output_stds.shape == (output_dim,)
+        self.output_stds = output_stds
 
     def _apply_train(self,
                      params: PyTree,
@@ -28,11 +40,8 @@ class ProbabilisticEnsemble(DeterministicEnsemble):
                      data_stats: DataStats) -> [chex.Array, chex.Array]:
         chex.assert_shape(x, (self.input_dim,))
         x = self.normalizer.normalize(x, data_stats.inputs)
-        out = self.model.apply({'params': params}, x)
-        mu, sig = jnp.split(out, 2, axis=-1)
-        sig = nn.softplus(sig)
-        sig = jnp.clip(sig, 0, self.sig_max) + self.sig_min
-        return mu, sig
+        return self.model.apply({'params': params}, x), self.normalizer.normalize_std(self.output_stds,
+                                                                                      data_stats.outputs)
 
     def apply_eval(self,
                    params: PyTree,
@@ -41,17 +50,12 @@ class ProbabilisticEnsemble(DeterministicEnsemble):
         chex.assert_shape(x, (self.input_dim,))
         x = self.normalizer.normalize(x, data_stats.inputs)
         out = self.model.apply({'params': params}, x)
-        mu, sig = jnp.split(out, 2, axis=-1)
-        sig = nn.softplus(sig)
-        sig = jnp.clip(sig, 0, self.sig_max) + self.sig_min
-        mean = self.normalizer.denormalize(mu, data_stats.outputs)
-        std = self.normalizer.denormalize_std(sig, data_stats.outputs)
-        return mean, std
+        return self.normalizer.denormalize(out, data_stats.outputs), self.output_stds
 
 
 if __name__ == '__main__':
     key = random.PRNGKey(0)
-    log_training = False
+    logging_wandb = True
     input_dim = 1
     output_dim = 2
 
@@ -63,35 +67,30 @@ if __name__ == '__main__':
     data_std = noise_level * jnp.ones(shape=(output_dim,))
 
     normalizer = Normalizer()
-    data = DataStats(inputs=xs, outputs=ys)
+    data = Data(inputs=xs, outputs=ys)
     data_stats = normalizer.compute_stats(data)
 
     num_particles = 10
-    model = ProbabilisticEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
-                                  num_particles=num_particles, output_stds=data_std)
+    model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
+                                  num_particles=num_particles, output_stds=data_std, logging_wandb=logging_wandb)
     start_time = time.time()
     print('Starting with training')
-    if log_training:
+    if logging_wandb:
         wandb.init(
             project='Pendulum',
             group='test group',
         )
 
-    model_params = fit_model(model=model, inputs=xs, outputs=ys, num_epochs=1000, data_stats=data_stats,
-                             batch_size=32, key=key, log_training=log_training)
+    model_state = model.fit_model(data=data, num_epochs=1000)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
-    test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
+    test_xs = jnp.linspace(-3, 13, 1000).reshape(-1, 1)
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
 
-    test_ys_noisy = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1) * (1 + noise_level * random.normal(
-        key=random.PRNGKey(0), shape=test_ys.shape))
+    test_ys_noisy = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1) + noise_level * random.normal(
+        key=random.PRNGKey(0), shape=test_ys.shape)
 
     test_stds = noise_level * jnp.ones(shape=test_ys.shape)
-
-    alpha_best = model.calibrate(model_params, test_xs, test_ys_noisy, data_stats)
-
-    model_state = BNNState(vmapped_params=model_params, data_stats=data_stats, calibration_alpha=alpha_best)
 
     f_dist, y_dist = vmap(model.posterior, in_axes=(0, None))(test_xs, model_state)
 
@@ -99,11 +98,6 @@ if __name__ == '__main__':
     eps_std = f_dist.stddev()
     al_std = jnp.mean(y_dist.aleatoric_stds(), axis=1)
     total_std = jnp.sqrt(jnp.square(eps_std) + jnp.square(al_std))
-
-    out = f_dist.sample(seed=jax.random.PRNGKey(0), sample_shape=10)
-
-    total_calibrated_std = jax.vmap(lambda x, y, z: jnp.sqrt(jnp.square(x * z) + jnp.square(y)), in_axes=(-1, -1, -1),
-                                    out_axes=-1)(eps_std, al_std, alpha_best)
 
     for j in range(output_dim):
         plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')

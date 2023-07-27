@@ -16,6 +16,7 @@ required = [
     'argparse-dataclass>=0.2.1',
     'jaxutils',
     'chex',
+    'brax>=0.9.1'
 ]
 
 extras = {}
@@ -27,4 +28,4 @@ setup(
     include_package_data=True,
     install_requires=required,
     extras_require=extras
-    )
+)

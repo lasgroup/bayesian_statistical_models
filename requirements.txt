@@ -1,0 +1,15 @@
+jax>=0.4.13
+jaxlib>=0.4.13
+jaxtyping==0.2.20
+optax>=0.1.6
+matplotlib>=3.7.2
+pytest==7.4.0
+flax>=0.4.1
+numpy>=1.22.2
+scipy>=1.8.0
+wandb>=0.12.11
+distrax>=0.1.2
+argparse-dataclass>=0.2.1
+jaxutils
+chex
+brax>=0.9.1

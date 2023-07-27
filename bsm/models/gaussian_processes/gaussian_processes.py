@@ -29,20 +29,20 @@ class GPModelState:
 
 class GaussianProcess(BayesianRegressionModel[GPModelState]):
     def __init__(self,
-                 input_dim: int,
-                 output_dim: int,
                  output_stds: chex.Array,
                  kernel: Kernel | None = None,
                  weight_decay: float = 0.0,
                  lr_rate: optax.Schedule | float = optax.constant_schedule(1e-2),
                  seed: int = 0,
-                 logging_wandb: bool = True
+                 logging_wandb: bool = True,
+                 *args,
+                 **kwargs
                  ):
-        super().__init__(input_dim, output_dim)
+        super().__init__(*args, **kwargs)
         if kernel is None:
-            kernel = RBF(input_dim)
+            kernel = RBF(self.input_dim)
         self.kernel = kernel
-        assert output_stds.shape == (output_dim,)
+        assert output_stds.shape == (self.output_dim,)
         self.output_stds = output_stds
         self.normalizer = Normalizer()
         self.tx = optax.adamw(learning_rate=lr_rate, weight_decay=weight_decay)

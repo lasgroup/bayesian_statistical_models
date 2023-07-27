@@ -6,14 +6,13 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-import wandb
 from jax import random, vmap
 from jaxtyping import PyTree
 
 from bsm.models.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
 from bsm.models.bayesian_neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
 from bsm.utils.normalization import DataStats, Data
-
+import wandb
 
 def prepare_stein_kernel(h=0.2 ** 2):
     def k(x, y):

@@ -4,10 +4,9 @@ import jax.random as jr
 import optax
 from jax import vmap
 
-from abstract_statistical_model import StatisticalModel
+from bsm.statistical_model.abstract_statistical_model import StatisticalModel
 from bsm.models.gaussian_processes.gaussian_processes import GPModelState, GaussianProcess
-from bsm.models.gaussian_processes.kernels import Kernel
-from bsm.utils.normalization import Data, DataStats
+from bsm.utils.normalization import Data
 from bsm.utils.type_aliases import StatisticalModelState, StatisticalModelOutput
 
 
@@ -15,20 +14,13 @@ class GPStatisticalModel(StatisticalModel[GPModelState]):
     def __init__(self,
                  input_dim: int,
                  output_dim: int,
-                 output_stds: chex.Array,
-                 kernel: Kernel | None = None,
-                 weight_decay: float = 0.0,
-                 lr_rate: optax.Schedule | float = optax.constant_schedule(1e-2),
-                 seed: int = 0,
                  f_norm_bound: float = 1.0,
                  delta: float = 0.1,
                  num_training_steps: int = 1000,
-                 logging_wandb: bool = True,
-                 beta: chex.Array | optax.Schedule | None = None
+                 beta: chex.Array | optax.Schedule | None = None,
+                 *args, **kwargs
                  ):
-        model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, output_stds=output_stds,
-                                kernel=kernel, weight_decay=weight_decay, lr_rate=lr_rate, seed=seed,
-                                logging_wandb=logging_wandb)
+        model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, *args, **kwargs)
         super().__init__(input_dim, output_dim, model)
         self.model = model
         self.f_norm_bound = f_norm_bound
@@ -79,16 +71,16 @@ if __name__ == '__main__':
 
     noise_level = 0.1
     d_l, d_u = 0, 10
-    xs = jnp.linspace(d_l, d_u, 128).reshape(-1, 1)
+    xs = jnp.linspace(d_l, d_u, 32).reshape(-1, 1)
     ys = jnp.concatenate([jnp.sin(xs), jnp.cos(3 * xs)], axis=1)
     ys = ys + noise_level * jr.normal(key=jr.PRNGKey(0), shape=ys.shape)
     data_std = noise_level * jnp.ones(shape=(output_dim,))
-    data = DataStats(inputs=xs, outputs=ys)
+    data = Data(inputs=xs, outputs=ys)
 
     model = GPStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
-                               f_norm_bound=10, beta=jnp.array([1.0, 15.0]))
-    init_model_state = model.init(key=jr.PRNGKey(0))
-    statistical_model_state = model.update(model_state=init_model_state, data=data)
+                               f_norm_bound=3, beta=None)
+    model_state = model.init(key=jr.PRNGKey(0))
+    statistical_model_state = model.update(model_state=model_state, data=data)
 
     # Test on new data
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)

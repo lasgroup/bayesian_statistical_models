@@ -70,6 +70,9 @@ class ParticleDistribution(Distribution):
     def aleatoric_stds(self) -> chex.Array:
         return self._aleatoric_stds
 
+    def aleatoric_std(self) -> chex.Array:
+        return jnp.mean(self._aleatoric_stds, axis=-2)
+
 
 class GRUParticleDistribution(ParticleDistribution):
 

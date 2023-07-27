@@ -1,3 +1,5 @@
+from typing import Sequence
+
 import chex
 import jax.numpy as jnp
 import jax.random as jr
@@ -5,9 +7,11 @@ import optax
 from jax import vmap
 
 from abstract_statistical_model import StatisticalModel
-from bsm.models.gaussian_processes.kernels import Kernel
 from bsm.models.bayesian_neural_networks.bnn import BNNState
-from bsm.utils.normalization import Data, DataStats
+from bsm.models.bayesian_neural_networks.bnn import BayesianNeuralNet
+from bsm.models.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
+from bsm.models.bayesian_neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
+from bsm.utils.normalization import Data
 from bsm.utils.type_aliases import StatisticalModelState, StatisticalModelOutput
 
 
@@ -16,22 +20,46 @@ class BNNStatisticalModel(StatisticalModel[BNNState]):
                  input_dim: int,
                  output_dim: int,
                  output_stds: chex.Array,
-                 kernel: Kernel | None = None,
+                 features: Sequence[int],
+                 num_particles: int,
                  weight_decay: float = 0.0,
                  lr_rate: optax.Schedule | float = optax.constant_schedule(1e-2),
+                 num_calibration_ps: int = 10,
+                 num_test_alphas: int = 100,
+                 batch_size: int = 64,
                  seed: int = 0,
-                 f_norm_bound: float = 1.0,
                  delta: float = 0.1,
                  num_training_steps: int = 1000,
                  logging_wandb: bool = True,
-                 beta: chex.Array | optax.Schedule | None = None
+                 beta: chex.Array | optax.Schedule | None = None,
+                 bnn_type: BayesianNeuralNet = DeterministicEnsemble,
+                 sig_min: float = 1e-3,
+                 sig_max: float = 1e3
                  ):
-        model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, output_stds=output_stds,
-                                kernel=kernel, weight_decay=weight_decay, lr_rate=lr_rate, seed=seed,
-                                logging_wandb=logging_wandb)
+        self.bnn_type = bnn_type
+        if self.bnn_type == DeterministicEnsemble:
+            model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, features=features,
+                                          num_particles=num_particles, output_stds=output_stds,
+                                          weight_decay=weight_decay, lr_rate=lr_rate,
+                                          num_calibration_ps=num_calibration_ps, num_test_alphas=num_test_alphas,
+                                          batch_size=batch_size, seed=seed, logging_wandb=logging_wandb)
+        elif self.bnn_type == ProbabilisticEnsemble:
+            model = ProbabilisticEnsemble(input_dim=input_dim, output_dim=output_dim, features=features,
+                                          num_particles=num_particles, output_stds=output_stds,
+                                          weight_decay=weight_decay, lr_rate=lr_rate,
+                                          num_calibration_ps=num_calibration_ps, num_test_alphas=num_test_alphas,
+                                          batch_size=batch_size, seed=seed, logging_wandb=logging_wandb,
+                                          sig_min=sig_min, sig_max=sig_max)
+
+        else:
+            model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, features=features,
+                                          num_particles=num_particles, output_stds=output_stds,
+                                          weight_decay=weight_decay, lr_rate=lr_rate,
+                                          num_calibration_ps=num_calibration_ps, num_test_alphas=num_test_alphas,
+                                          batch_size=batch_size, seed=seed, logging_wandb=logging_wandb)
+            raise NotImplementedError(f"Unknown BNN type: {self.bnn_type}")
         super().__init__(input_dim, output_dim, model)
         self.model = model
-        self.f_norm_bound = f_norm_bound
         self.delta = delta
         self.num_training_steps = num_training_steps
         if beta is None:
@@ -46,7 +74,8 @@ class BNNStatisticalModel(StatisticalModel[BNNState]):
         data = Data(inputs=inputs, outputs=outputs)
         data_stats = self.model.normalizer.compute_stats(data.inputs)
         params = self.model.init(key)
-        return BNNState(params=params, data_stats=data_stats, history=data)
+        calibration_alpha = jnp.ones(shape=(self.output_dim,))
+        return BNNState(vmapped_params=params, data_stats=data_stats, calibration_alpha=calibration_alpha)
 
     def update(self, model_state: BNNState, data: Data) -> StatisticalModelState[BNNState]:
         new_model_state = self.model.fit_model(data, self.num_training_steps)
@@ -68,10 +97,12 @@ if __name__ == '__main__':
     ys = jnp.concatenate([jnp.sin(xs), jnp.cos(3 * xs)], axis=1)
     ys = ys + noise_level * jr.normal(key=jr.PRNGKey(0), shape=ys.shape)
     data_std = noise_level * jnp.ones(shape=(output_dim,))
-    data = DataStats(inputs=xs, outputs=ys)
+    data = Data(inputs=xs, outputs=ys)
 
     model = BNNStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
-                                f_norm_bound=10, beta=jnp.array([1.0, 15.0]))
+                                beta=jnp.array([1.0, 1.0]), num_particles=10, features=[64, 64, 64]
+                                )
+
     init_model_state = model.init(key=jr.PRNGKey(0))
     statistical_model_state = model.update(model_state=init_model_state, data=data)
 

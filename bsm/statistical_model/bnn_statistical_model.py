@@ -22,13 +22,12 @@ class BNNStatisticalModel(StatisticalModel[BNNState]):
                  output_stds: chex.Array,
                  features: Sequence[int],
                  num_particles: int,
-                 weight_decay: float = 0.0,
-                 lr_rate: optax.Schedule | float = optax.constant_schedule(1e-2),
+                 weight_decay: float = 1.0,
+                 lr_rate: optax.Schedule | float = optax.constant_schedule(1e-3),
                  num_calibration_ps: int = 10,
                  num_test_alphas: int = 100,
                  batch_size: int = 64,
                  seed: int = 0,
-                 delta: float = 0.1,
                  num_training_steps: int = 1000,
                  logging_wandb: bool = True,
                  beta: chex.Array | optax.Schedule | None = None,
@@ -60,7 +59,6 @@ class BNNStatisticalModel(StatisticalModel[BNNState]):
             raise NotImplementedError(f"Unknown BNN type: {self.bnn_type}")
         super().__init__(input_dim, output_dim, model)
         self.model = model
-        self.delta = delta
         self.num_training_steps = num_training_steps
         if beta is None:
             beta = jnp.ones(shape=(output_dim,))
@@ -93,22 +91,22 @@ if __name__ == '__main__':
 
     noise_level = 0.1
     d_l, d_u = 0, 10
-    xs = jnp.linspace(d_l, d_u, 128).reshape(-1, 1)
-    ys = jnp.concatenate([jnp.sin(xs), jnp.cos(3 * xs)], axis=1)
+    xs = jnp.linspace(d_l, d_u, 256).reshape(-1, 1)
+    ys = jnp.concatenate([jnp.sin(xs), jnp.cos(xs)], axis=1)
     ys = ys + noise_level * jr.normal(key=jr.PRNGKey(0), shape=ys.shape)
     data_std = noise_level * jnp.ones(shape=(output_dim,))
     data = Data(inputs=xs, outputs=ys)
 
     model = BNNStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
-                                beta=jnp.array([1.0, 1.0]), num_particles=10, features=[64, 64, 64]
-                                )
+                                beta=jnp.array([1.0, 1.0]), num_particles=10, features=[64, 64, 64],
+                                bnn_type=DeterministicEnsemble)
 
     init_model_state = model.init(key=jr.PRNGKey(0))
     statistical_model_state = model.update(model_state=init_model_state, data=data)
 
     # Test on new data
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
-    test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(3 * test_xs)], axis=1)
+    test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
 
     preds = vmap(model.predict, in_axes=(0, None),
                  out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,

@@ -33,8 +33,6 @@ class BNNState:
 
 class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
     def __init__(self,
-                 input_dim: int,
-                 output_dim: int,
                  features: Sequence[int],
                  num_particles: int,
                  weight_decay: float = 1.0,
@@ -43,8 +41,10 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
                  num_test_alphas: int = 100,
                  logging_wandb: bool = True,
                  batch_size: int = 32,
-                 seed: int = 0):
-        super().__init__(input_dim, output_dim)
+                 seed: int = 0,
+                 train_share: bool = 0.8,
+                 *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.num_particles = num_particles
         self.model = MLP(features=features, output_dim=self.output_dim)
         self.tx = optax.adamw(learning_rate=lr_rate, weight_decay=weight_decay)
@@ -54,6 +54,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
         self.logging_wandb = logging_wandb
         self.batch_size = batch_size
         self.key = jr.PRNGKey(seed)
+        self.train_share = train_share
 
     @partial(jit, static_argnums=(0,))
     def posterior(self, input: chex.Array, bnn_state: BNNState) -> Tuple[ParticleDistribution, ParticleDistribution]:
@@ -229,7 +230,17 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
 
         self.key, key = jr.split(self.key)
         buffer_state = buffer.init(key)
-        buffer_state = buffer.insert(buffer_state, data)
+
+        # Prepare data
+        self.key, key = jr.split(self.key)
+        permuted_data = jtu.tree_map(lambda x: jr.permutation(key, x), data)
+
+        # Taking self.train_share number of points for training
+        train_data = jtu.tree_map(lambda x: x[:int(self.train_share * num_points)], permuted_data)
+        # Taking the rest for calibration
+        calibrate_data = jtu.tree_map(lambda x: x[int(self.train_share * num_points):], permuted_data)
+
+        buffer_state = buffer.insert(buffer_state, train_data)
 
         def f(carry, _):
             opt_state, vmapped_params, buffer_state = carry
@@ -243,7 +254,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
         if self.logging_wandb:
             for i in range(num_epochs):
                 wandb.log(jtu.tree_map(lambda x: x[i], statistics))
-        calibrate_alpha = self.calibrate(vmapped_params, data.inputs, data.outputs, data_stats)
+        calibrate_alpha = self.calibrate(vmapped_params, calibrate_data.inputs, calibrate_data.outputs, data_stats)
         model_state = BNNState(data_stats=data_stats, vmapped_params=vmapped_params,
                                calibration_alpha=calibrate_alpha)
         return model_state

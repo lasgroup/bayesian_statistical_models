@@ -64,7 +64,7 @@ if __name__ == '__main__':
 
     noise_level = 0.1
     d_l, d_u = 0, 10
-    xs = jnp.linspace(d_l, d_u, 256).reshape(-1, 1)
+    xs = jnp.linspace(d_l, d_u, 64).reshape(-1, 1)
     ys = jnp.concatenate([jnp.sin(xs), jnp.cos(xs)], axis=1)
     ys = ys + noise_level * jr.normal(key=jr.PRNGKey(0), shape=ys.shape)
     data_std = noise_level * jnp.ones(shape=(output_dim,))
@@ -72,7 +72,7 @@ if __name__ == '__main__':
 
     model = BNNStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
                                 beta=jnp.array([1.0, 1.0]), num_particles=10, features=[64, 64, 64],
-                                bnn_type=DeterministicEnsemble)
+                                bnn_type=ProbabilisticEnsemble, train_share=0.6)
 
     init_model_state = model.init(key=jr.PRNGKey(0))
     statistical_model_state = model.update(model_state=init_model_state, data=data)

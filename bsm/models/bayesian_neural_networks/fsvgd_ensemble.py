@@ -6,14 +6,13 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-import wandb
 from jax import random, vmap
 from jaxtyping import PyTree
 
-from bsm.models.bayesian_neural_networks.deterministic_ensembles import fit_model, DeterministicEnsemble
-from bsm.models.bayesian_neural_networks.bnn import BNNState
+import wandb
+from bsm.models.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
 from bsm.models.bayesian_neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
-from bsm.utils.normalization import Normalizer, DataStats
+from bsm.utils.normalization import DataStats
 
 
 def prepare_stein_kernel(h=0.2 ** 2):
@@ -113,7 +112,7 @@ class ProbabilisticFSVGDEnsemble(ProbabilisticEnsemble):
 
 if __name__ == '__main__':
     key = random.PRNGKey(0)
-    log_training = False
+    logging_wandb = False
     input_dim = 1
     output_dim = 2
 
@@ -124,36 +123,30 @@ if __name__ == '__main__':
     ys = ys + noise_level * random.normal(key=random.PRNGKey(0), shape=ys.shape)
     data_std = noise_level * jnp.ones(shape=(output_dim,))
 
-    normalizer = Normalizer()
-    data = DataStats(inputs=xs, outputs=ys)
-    data_stats = normalizer.compute_stats(data)
+    data = Data(inputs=xs, outputs=ys)
 
     num_particles = 10
     model = ProbabilisticEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
-                                  num_particles=num_particles, output_stds=data_std)
+                                  num_particles=num_particles, output_stds=data_std, logging_wandb=logging_wandb)
+
     start_time = time.time()
     print('Starting with training')
-    if log_training:
+    if logging_wandb:
         wandb.init(
             project='Pendulum',
             group='test group',
         )
 
-    model_params = fit_model(model=model, inputs=xs, outputs=ys, num_epochs=1000, data_stats=data_stats,
-                             batch_size=32, key=key, log_training=log_training)
+    model_state = model.fit_model(data=data, num_epochs=1000)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
-    test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
+    test_xs = jnp.linspace(-3, 13, 1000).reshape(-1, 1)
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
 
-    test_ys_noisy = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1) * (1 + noise_level * random.normal(
-        key=random.PRNGKey(0), shape=test_ys.shape))
+    test_ys_noisy = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1) + noise_level * random.normal(
+        key=random.PRNGKey(0), shape=test_ys.shape)
 
     test_stds = noise_level * jnp.ones(shape=test_ys.shape)
-
-    alpha_best = model.calibrate(model_params, test_xs, test_ys_noisy, data_stats)
-
-    model_state = BNNState(vmapped_params=model_params, data_stats=data_stats, calibration_alpha=alpha_best)
 
     f_dist, y_dist = vmap(model.posterior, in_axes=(0, None))(test_xs, model_state)
 
@@ -161,11 +154,6 @@ if __name__ == '__main__':
     eps_std = f_dist.stddev()
     al_std = jnp.mean(y_dist.aleatoric_stds(), axis=1)
     total_std = jnp.sqrt(jnp.square(eps_std) + jnp.square(al_std))
-
-    out = f_dist.sample(seed=jax.random.PRNGKey(0), sample_shape=10)
-
-    total_calibrated_std = jax.vmap(lambda x, y, z: jnp.sqrt(jnp.square(x * z) + jnp.square(y)), in_axes=(-1, -1, -1),
-                                    out_axes=-1)(eps_std, al_std, alpha_best)
 
     for j in range(output_dim):
         plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
@@ -183,7 +171,6 @@ if __name__ == '__main__':
         plt.show()
 
     for j in range(output_dim):
-        # plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
         for i in range(num_particles):
             plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
         plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')

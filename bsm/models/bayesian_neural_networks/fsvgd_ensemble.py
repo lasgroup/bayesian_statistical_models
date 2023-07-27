@@ -14,6 +14,7 @@ from bsm.models.bayesian_neural_networks.probabilistic_ensembles import Probabil
 from bsm.utils.normalization import DataStats, Data
 import wandb
 
+
 def prepare_stein_kernel(h=0.2 ** 2):
     def k(x, y):
         return jnp.exp(-jnp.sum((x - y) ** 2) / (2 * h))

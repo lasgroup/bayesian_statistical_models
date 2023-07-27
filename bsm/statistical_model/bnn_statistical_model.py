@@ -4,11 +4,11 @@ import jax.random as jr
 import optax
 from jax import vmap
 
-from abstract_statistical_model import StatisticalModel
 from bsm.models.bayesian_neural_networks.bnn import BNNState
 from bsm.models.bayesian_neural_networks.bnn import BayesianNeuralNet
 from bsm.models.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
 from bsm.models.bayesian_neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
+from bsm.statistical_model.abstract_statistical_model import StatisticalModel
 from bsm.utils.normalization import Data
 from bsm.utils.type_aliases import StatisticalModelState, StatisticalModelOutput
 
@@ -72,7 +72,8 @@ if __name__ == '__main__':
 
     model = BNNStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
                                 beta=jnp.array([1.0, 1.0]), num_particles=10, features=[64, 64, 64],
-                                bnn_type=ProbabilisticEnsemble, train_share=0.6)
+                                bnn_type=ProbabilisticEnsemble, train_share=0.6, num_training_steps=2000,
+                                weight_decay=1e-1, )
 
     init_model_state = model.init(key=jr.PRNGKey(0))
     statistical_model_state = model.update(model_state=init_model_state, data=data)
@@ -98,4 +99,17 @@ if __name__ == '__main__':
         plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
         by_label = dict(zip(labels, handles))
         plt.legend(by_label.values(), by_label.keys())
+        plt.show()
+
+    num_test_points = 1000
+    in_domain_test_xs = jnp.linspace(0, 10, num_test_points).reshape(-1, 1)
+    in_domain_test_ys = jnp.concatenate([jnp.sin(in_domain_test_xs), jnp.cos(in_domain_test_xs)], axis=1)
+    in_domain_preds = vmap(model.predict, in_axes=(0, None),
+                           out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
+                                                           statistical_model_state=None))(in_domain_test_xs,
+                                                                                          statistical_model_state)
+    for j in range(output_dim):
+        plt.plot(in_domain_test_xs, in_domain_preds.mean[:, j], label='Mean', color='blue')
+        plt.plot(in_domain_test_xs, in_domain_test_ys[:, j], label='Fun', color='Green')
+        plt.legend()
         plt.show()

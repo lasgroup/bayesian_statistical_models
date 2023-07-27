@@ -6,7 +6,7 @@ from jax import vmap
 
 from abstract_statistical_model import StatisticalModel
 from bsm.models.gaussian_processes.gaussian_processes import GPModelState, GaussianProcess
-from bsm.utils.normalization import Data, DataStats
+from bsm.utils.normalization import Data
 from bsm.utils.type_aliases import StatisticalModelState, StatisticalModelOutput
 
 

@@ -1,5 +1,3 @@
-from typing import Sequence
-
 import chex
 import jax.numpy as jnp
 import jax.random as jr
@@ -27,10 +25,10 @@ class BNNStatisticalModel(StatisticalModel[BNNState]):
         if self.bnn_type == DeterministicEnsemble:
             model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, *args, **kwargs)
         elif self.bnn_type == ProbabilisticEnsemble:
-            model = ProbabilisticEnsemble(input_dim=input_dim, output_dim=output_dim,*args, **kwargs)
+            model = ProbabilisticEnsemble(input_dim=input_dim, output_dim=output_dim, *args, **kwargs)
 
         else:
-            model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim,*args, **kwargs)
+            model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, *args, **kwargs)
             raise NotImplementedError(f"Unknown BNN type: {self.bnn_type}")
         super().__init__(input_dim, output_dim, model)
         self.model = model

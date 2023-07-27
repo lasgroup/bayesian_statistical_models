@@ -17,7 +17,7 @@ class DeterministicEnsemble(BayesianNeuralNet):
                  *args,
                  **kwargs):
         super().__init__(*args, **kwargs)
-        assert output_stds.shape == (output_dim,)
+        assert output_stds.shape == (self.output_dim,)
         self.output_stds = output_stds
 
     def _apply_train(self,

@@ -19,43 +19,18 @@ class BNNStatisticalModel(StatisticalModel[BNNState]):
     def __init__(self,
                  input_dim: int,
                  output_dim: int,
-                 output_stds: chex.Array,
-                 features: Sequence[int],
-                 num_particles: int,
-                 weight_decay: float = 1.0,
-                 lr_rate: optax.Schedule | float = optax.constant_schedule(1e-3),
-                 num_calibration_ps: int = 10,
-                 num_test_alphas: int = 100,
-                 batch_size: int = 64,
-                 seed: int = 0,
                  num_training_steps: int = 1000,
-                 logging_wandb: bool = True,
                  beta: chex.Array | optax.Schedule | None = None,
                  bnn_type: BayesianNeuralNet = DeterministicEnsemble,
-                 sig_min: float = 1e-3,
-                 sig_max: float = 1e3
-                 ):
+                 *args, **kwargs):
         self.bnn_type = bnn_type
         if self.bnn_type == DeterministicEnsemble:
-            model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, features=features,
-                                          num_particles=num_particles, output_stds=output_stds,
-                                          weight_decay=weight_decay, lr_rate=lr_rate,
-                                          num_calibration_ps=num_calibration_ps, num_test_alphas=num_test_alphas,
-                                          batch_size=batch_size, seed=seed, logging_wandb=logging_wandb)
+            model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, *args, **kwargs)
         elif self.bnn_type == ProbabilisticEnsemble:
-            model = ProbabilisticEnsemble(input_dim=input_dim, output_dim=output_dim, features=features,
-                                          num_particles=num_particles, output_stds=output_stds,
-                                          weight_decay=weight_decay, lr_rate=lr_rate,
-                                          num_calibration_ps=num_calibration_ps, num_test_alphas=num_test_alphas,
-                                          batch_size=batch_size, seed=seed, logging_wandb=logging_wandb,
-                                          sig_min=sig_min, sig_max=sig_max)
+            model = ProbabilisticEnsemble(input_dim=input_dim, output_dim=output_dim,*args, **kwargs)
 
         else:
-            model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, features=features,
-                                          num_particles=num_particles, output_stds=output_stds,
-                                          weight_decay=weight_decay, lr_rate=lr_rate,
-                                          num_calibration_ps=num_calibration_ps, num_test_alphas=num_test_alphas,
-                                          batch_size=batch_size, seed=seed, logging_wandb=logging_wandb)
+            model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim,*args, **kwargs)
             raise NotImplementedError(f"Unknown BNN type: {self.bnn_type}")
         super().__init__(input_dim, output_dim, model)
         self.model = model

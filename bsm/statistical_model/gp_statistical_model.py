@@ -1,4 +1,5 @@
 import chex
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -24,7 +25,7 @@ class GPStatisticalModel(StatisticalModel[GPModelState]):
                  delta: float = 0.1,
                  num_training_steps: int = 1000,
                  logging_wandb: bool = True,
-                 beta: float | optax.Schedule | None = None
+                 beta: chex.Array | optax.Schedule | None = None
                  ):
         model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, output_stds=output_stds,
                                 kernel=kernel, weight_decay=weight_decay, lr_rate=lr_rate, seed=seed,
@@ -34,8 +35,8 @@ class GPStatisticalModel(StatisticalModel[GPModelState]):
         self.f_norm_bound = f_norm_bound
         self.delta = delta
         self.num_training_steps = num_training_steps
-        if type(beta) == float:
-            self._potential_beta = optax.constant_schedule(beta)
+        if isinstance(beta, chex.Array):
+            beta = optax.constant_schedule(beta)
         self._potential_beta = beta
 
     def init(self, key: chex.PRNGKey) -> GPModelState:
@@ -53,6 +54,7 @@ class GPStatisticalModel(StatisticalModel[GPModelState]):
             return StatisticalModelState(model_state=new_model_state, beta=beta)
         else:
             beta = self._potential_beta(data.inputs.shape[0])
+            assert beta.shape == (self.output_dim,)
             return StatisticalModelState(model_state=new_model_state, beta=beta)
 
     def compute_beta(self, model_state: GPModelState, data: Data):
@@ -85,7 +87,7 @@ if __name__ == '__main__':
     data = DataStats(inputs=xs, outputs=ys)
 
     model = GPStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
-                               f_norm_bound=10)
+                               f_norm_bound=10, beta=jnp.array([1.0, 15.0]))
     init_model_state = model.init(key=jr.PRNGKey(0))
     statistical_model_state = model.update(model_state=init_model_state, data=data)
 

@@ -1,27 +1,32 @@
 import time
 from collections import OrderedDict
 from functools import partial
-from typing import Sequence, Dict
+from typing import Sequence, Dict, Tuple
 
 import chex
 import jax
 import jax.numpy as jnp
-import jax.random as jr
-import jax.tree_util as jtu
 import matplotlib.pyplot as plt
 import optax
+import wandb
 from jax import random, vmap, jit
-from jax.lax import scan
 from jax.scipy.stats import norm
 from jaxtyping import PyTree
 
-
-import wandb
+from bsm.models.bayesian_regression_model import BayesianRegressionModel
 from bsm.utils.network_utils import MLP
 from bsm.utils.normalization import Normalizer, DataStats
+from bsm.utils.particle_distribution import ParticleDistribution
 
 
-class DeterministicEnsemble:
+@chex.dataclass
+class BNNState:
+    vmapped_params: PyTree
+    data_stats: DataStats
+    calibration_alpha: chex.Array
+
+
+class DeterministicEnsemble(BayesianRegressionModel[BNNState]):
     def __init__(self,
                  input_dim: int,
                  output_dim: int,
@@ -32,8 +37,7 @@ class DeterministicEnsemble:
                  lr_rate: optax.Schedule | float = optax.constant_schedule(1e-3),
                  num_calibration_ps: int = 10,
                  num_test_alphas: int = 100):
-        self.input_dim = input_dim
-        self.output_dim = output_dim
+        super().__init__(input_dim, output_dim)
         self.num_particles = num_particles
         assert output_stds.shape == (output_dim,)
         self.output_stds = output_stds
@@ -42,6 +46,17 @@ class DeterministicEnsemble:
         self.normalizer = Normalizer()
         self.num_calibration_ps = num_calibration_ps
         self.num_test_alphas = num_test_alphas
+
+    @partial(jit, static_argnums=(0,))
+    def posterior(self, input: chex.Array, bnn_state: BNNState) -> Tuple[ParticleDistribution, ParticleDistribution]:
+        """Computes the posterior distribution of the ensemble given the input and the data statistics."""
+        chex.assert_shape(input, (self.input_dim,))
+        v_apply = vmap(self.apply_eval, in_axes=(0, None, None), out_axes=0)
+        means, aleatoric_stds = v_apply(bnn_state.vmapped_params, input, bnn_state.data_stats)
+        assert means.shape == aleatoric_stds.shape == (self.num_particles, self.output_dim)
+        f_dist = ParticleDistribution(means, calibration_alpha=bnn_state.calibration_alpha)
+        y_dist = ParticleDistribution(means, aleatoric_stds, calibration_alpha=bnn_state.calibration_alpha)
+        return f_dist, y_dist
 
     def _apply_train(self,
                      params: PyTree,
@@ -134,11 +149,11 @@ class DeterministicEnsemble:
         keys = random.split(key, self.num_particles)
         return vmap(self._init)(keys)
 
-    def calibration(self,
-                    vmapped_params: PyTree,
-                    inputs: chex.Array,
-                    outputs: chex.Array,
-                    data_stats: DataStats) -> chex.Array:
+    def calibrate(self,
+                  vmapped_params: PyTree,
+                  inputs: chex.Array,
+                  outputs: chex.Array,
+                  data_stats: DataStats) -> chex.Array:
         ps = jnp.linspace(0, 1, self.num_calibration_ps + 1)[1:]
         return self._calculate_calibration_alpha(vmapped_params, inputs, outputs, ps, data_stats)
 
@@ -183,8 +198,8 @@ class DeterministicEnsemble:
             predicted_outputs, predicted_stds = vmap(self.apply_eval, in_axes=(0, None, None), out_axes=0)(
                 vmapped_params, x, data_stats)
             means, epistemic_stds = predicted_outputs.mean(axis=0), predicted_outputs.std(axis=0)
-            aleatoric_stds = predicted_stds.mean(axis=0)
-            std = jnp.sqrt((epistemic_stds * alpha) ** 2 + aleatoric_stds ** 2)
+            aleatoric_var = (predicted_stds ** 2).mean(axis=0)
+            std = jnp.sqrt((epistemic_stds * alpha) ** 2 + aleatoric_var)
             chex.assert_shape(std, (self.output_dim,))
             cdfs = vmap(norm.cdf)(y, means, std)
 
@@ -269,7 +284,7 @@ if __name__ == '__main__':
                              batch_size=32, key=key, log_training=log_training)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
-    test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
+    test_xs = jnp.linspace(-3, 13, 1000).reshape(-1, 1)
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
 
     test_ys_noisy = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1) + noise_level * random.normal(
@@ -277,35 +292,29 @@ if __name__ == '__main__':
 
     test_stds = noise_level * jnp.ones(shape=test_ys.shape)
 
-    alpha_best = model.calibration(model_params, test_xs, test_ys_noisy, data_stats)
-    apply_ens = vmap(model.apply_eval, in_axes=(None, 0, None))
-    preds, aleatoric_stds = vmap(apply_ens, in_axes=(0, None, None))(model_params, test_xs, data_stats)
-    pred_mean = jnp.mean(preds, axis=0)
-    eps_std = jnp.std(preds, axis=0)
-    al_std = jnp.mean(aleatoric_stds, axis=0)
+    alpha_best = model.calibrate(model_params, test_xs, test_ys_noisy, data_stats)
+
+    bnn_state = BNNState(vmapped_params=model_params, data_stats=data_stats,
+                         calibration_alpha=alpha_best)
+
+    f_dist, y_dist = vmap(model.posterior, in_axes=(0, None))(test_xs, bnn_state)
+
+    pred_mean = f_dist.mean()
+    eps_std = f_dist.stddev()
+    al_std = jnp.mean(y_dist.aleatoric_stds(), axis=1)
     total_std = jnp.sqrt(jnp.square(eps_std) + jnp.square(al_std))
+
+    out = f_dist.sample(seed=jax.random.PRNGKey(0), sample_shape=10)
+    out = f_dist.sample_particle(seed=jax.random.PRNGKey(0))
+
     total_calibrated_std = jax.vmap(lambda x, y, z: jnp.sqrt(jnp.square(x * z) + jnp.square(y)), in_axes=(-1, -1, -1),
                                     out_axes=-1)(eps_std, al_std, alpha_best)
+
     for j in range(output_dim):
         plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
         for i in range(num_particles):
-            plt.plot(test_xs, preds[i, :, j], label='NN prediction', color='black', alpha=0.3)
-        plt.plot(test_xs, jnp.mean(preds[..., j], axis=0), label='Mean', color='blue')
-        plt.fill_between(test_xs.reshape(-1),
-                         (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
-                         (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
-                         label=r'$2\sigma$', alpha=0.3, color='blue')
-        handles, labels = plt.gca().get_legend_handles_labels()
-        plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
-        by_label = dict(zip(labels, handles))
-        plt.legend(by_label.values(), by_label.keys())
-        plt.show()
-
-    for j in range(output_dim):
-        # plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
-        for i in range(num_particles):
-            plt.plot(test_xs, preds[i, :, j], label='NN prediction', color='black', alpha=0.3)
-        plt.plot(test_xs, jnp.mean(preds[..., j], axis=0), label='Mean', color='blue')
+            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+        plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
                          (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
                          (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
@@ -318,16 +327,12 @@ if __name__ == '__main__':
 
     for j in range(output_dim):
         for i in range(num_particles):
-            plt.plot(test_xs, preds[i, :, j], label='NN prediction', color='black', alpha=0.3)
-        plt.plot(test_xs, jnp.mean(preds[..., j], axis=0), label='Mean', color='blue')
+            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+        plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
-                         (pred_mean[..., j] - 2 * total_calibrated_std[..., j]).reshape(-1),
-                         (pred_mean[..., j] + 2 * total_calibrated_std[..., j]).reshape(-1),
-                         label=r'$2\sigma}$', alpha=0.3, color='yellow')
-        plt.fill_between(test_xs.reshape(-1),
-                         (pred_mean[..., j] - 2 * alpha_best[j] * eps_std[..., j]).reshape(-1),
-                         (pred_mean[..., j] + 2 * alpha_best[j] * eps_std[..., j]).reshape(-1),
-                         label=r'$2\sigma_{eps}$', alpha=0.3, color='blue')
+                         (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
+                         (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
+                         label=r'$2\sigma$', alpha=0.3, color='blue')
         handles, labels = plt.gca().get_legend_handles_labels()
         plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
         by_label = dict(zip(labels, handles))

@@ -55,7 +55,7 @@ class DeterministicEnsemble(BayesianNeuralNet):
 
 if __name__ == '__main__':
     key = random.PRNGKey(0)
-    logging_wandb = True
+    logging_wandb = False
     input_dim = 1
     output_dim = 2
 
@@ -96,13 +96,13 @@ if __name__ == '__main__':
 
     pred_mean = f_dist.mean()
     eps_std = f_dist.stddev()
-    al_std = jnp.mean(y_dist.aleatoric_stds(), axis=1)
+    al_std = jnp.mean(y_dist.aleatoric_stds, axis=1)
     total_std = jnp.sqrt(jnp.square(eps_std) + jnp.square(al_std))
 
     for j in range(output_dim):
         plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
         for i in range(num_particles):
-            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+            plt.plot(test_xs, f_dist.particle_means[:, i, j], label='NN prediction', color='black', alpha=0.3)
         plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
                          (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
@@ -116,7 +116,7 @@ if __name__ == '__main__':
 
     for j in range(output_dim):
         for i in range(num_particles):
-            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+            plt.plot(test_xs, f_dist.particle_means[:, i, j], label='NN prediction', color='black', alpha=0.3)
         plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
                          (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),

@@ -58,7 +58,7 @@ if __name__ == '__main__':
     d_l, d_u = 0, 10
     xs = jnp.linspace(d_l, d_u, 256).reshape(-1, 1)
     ys = jnp.concatenate([jnp.sin(xs), jnp.cos(xs)], axis=1)
-    ys = ys + noise_level * random.normal(key=random.PRNGKey(0), shape=ys.shape)
+    ys = ys * (1 + noise_level * random.normal(key=random.PRNGKey(0), shape=ys.shape))
     data_std = noise_level * jnp.ones(shape=(output_dim,))
 
     data = Data(inputs=xs, outputs=ys)
@@ -81,8 +81,8 @@ if __name__ == '__main__':
     test_xs = jnp.linspace(-3, 13, 1000).reshape(-1, 1)
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
 
-    test_ys_noisy = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1) + noise_level * random.normal(
-        key=random.PRNGKey(0), shape=test_ys.shape)
+    test_ys_noisy = test_ys * (1 + noise_level * random.normal(
+        key=random.PRNGKey(0), shape=test_ys.shape))
 
     test_stds = noise_level * jnp.ones(shape=test_ys.shape)
 
@@ -90,13 +90,13 @@ if __name__ == '__main__':
 
     pred_mean = f_dist.mean()
     eps_std = f_dist.stddev()
-    al_std = jnp.mean(y_dist.aleatoric_stds(), axis=1)
+    al_std = jnp.mean(y_dist.aleatoric_stds, axis=1)
     total_std = jnp.sqrt(jnp.square(eps_std) + jnp.square(al_std))
 
     for j in range(output_dim):
         plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
         for i in range(num_particles):
-            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+            plt.plot(test_xs, f_dist.particle_means[:, i, j], label='NN prediction', color='black', alpha=0.3)
         plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
                          (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
@@ -110,7 +110,7 @@ if __name__ == '__main__':
 
     for j in range(output_dim):
         for i in range(num_particles):
-            plt.plot(test_xs, f_dist.particles()[:, i, j], label='NN prediction', color='black', alpha=0.3)
+            plt.plot(test_xs, f_dist.particle_means[:, i, j], label='NN prediction', color='black', alpha=0.3)
         plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
                          (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),

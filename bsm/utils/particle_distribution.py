@@ -8,12 +8,12 @@ from distrax import Distribution, Normal
 
 class ParticleDistribution(Distribution):
     def __init__(self,
-                 particles: chex.Array,
+                 particle_means: chex.Array,
                  aleatoric_stds: chex.Array | None = None,
                  calibration_alpha: chex.Array | None = None):
-        self._particles = particles
-        assert self._particles.ndim == 2
-        self._num_particles, self._dim = self._particles.shape
+        self._particle_means = particle_means
+        assert self._particle_means.ndim == 2
+        self._num_particles, self._dim = self._particle_means.shape
 
         if calibration_alpha is None:
             calibration_alpha = jnp.ones(shape=(self._dim,))
@@ -35,38 +35,51 @@ class ParticleDistribution(Distribution):
         return samples
 
     def mean(self) -> chex.Array:
-        return jnp.mean(self._particles, axis=-2)
+        return jnp.mean(self._particle_means, axis=-2)
 
     def stddev(self) -> chex.Array:
         # Total std is sqrt of variance of particles and mean of aleatoric stds
-        eps_var = (jnp.std(self._particles, axis=-2) * self._calibration_alpha) ** 2
+        eps_var = (jnp.std(self._particle_means, axis=-2) * self._calibration_alpha) ** 2
         ale_var = jnp.mean(self._aleatoric_stds ** 2, axis=-2)
         total_std = jnp.sqrt(eps_var + ale_var)
         return total_std
 
     def median(self) -> chex.Array:
-        return jnp.median(self._particles, axis=-2)
+        return jnp.median(self._particle_means, axis=-2)
 
     def log_prob(self, value: chex.Array) -> chex.Array:
         return self._normal_approx.log_prob(value)
 
     def event_shape(self) -> Tuple[int, ...]:
-        particles_shape = list(self._particles.shape)
+        particles_shape = list(self._particle_means.shape)
         del particles_shape[-2]
         return tuple(particles_shape)
 
     def sample_particle(self, seed: chex.PRNGKey) -> chex.Array:
         key_idx, key_noise = jr.split(seed)
         particle_idx = jr.randint(key_idx, shape=(), minval=0, maxval=self._num_particles)
-        f_sample = self._particles[..., particle_idx, :]
+        f_sample = self._particle_means[..., particle_idx, :]
         noise = jr.normal(key_noise, shape=f_sample.shape) * self._aleatoric_stds[..., particle_idx, :]
         return f_sample + noise
 
-    def particles(self) -> chex.Array:
-        return self._particles
+    @property
+    def particle_means(self) -> chex.Array:
+        return self._particle_means
 
+    @property
     def aleatoric_stds(self) -> chex.Array:
         return self._aleatoric_stds
+
+
+class GRUParticleDistribution(ParticleDistribution):
+
+    def __init__(self, particle_hidden_states: chex.Array, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._particle_hidden_states = particle_hidden_states
+
+    @property
+    def particle_hidden_states(self) -> chex.Array:
+        return self._particle_hidden_states
 
 
 if __name__ == '__main__':

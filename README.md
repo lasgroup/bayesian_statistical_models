@@ -1,1 +1,1 @@
-![example workflow](https://github.com/github/docs/actions/workflows/main.yml/badge.svg)
+![Continuous integration](https://github.com/google/jax/actions/workflows/continuous_integration.yml/badge.svg)

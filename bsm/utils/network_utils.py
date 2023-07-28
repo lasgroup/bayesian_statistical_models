@@ -41,8 +41,8 @@ class GRUModel(nn.Module):
         rnn_hidden_state = jnp.empty((self.hidden_state_size * self.num_cells))
         for i in range(self.num_cells):
             final_h, full_h = nn.RNN(nn.GRUCell(features=self.hidden_state_size), return_carry=True,
-                                     name='rnn')(inputs=x,
-                                                 initial_carry=initial_h[i])
+                                     name='rnn_' + str(i))(inputs=x,
+                                                           initial_carry=initial_h[i])
             x = full_h
             rnn_hidden_state = rnn_hidden_state.at[..., i * self.hidden_state_size:
                                                         (i + 1) * self.hidden_state_size].set(final_h)
@@ -54,5 +54,6 @@ class GRUModel(nn.Module):
             if self.output_dim is not None:
                 x = nn.Dense(features=self.output_dim)(x)
             return x
+
         x = jax.vmap(mlp)(x)
         return rnn_hidden_state, x

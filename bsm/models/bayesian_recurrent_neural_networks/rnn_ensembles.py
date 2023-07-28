@@ -23,6 +23,13 @@ import flax.linen as nn
 from bsm.utils.particle_distribution import GRUParticleDistribution
 
 
+def create_windowed_array(arr: jnp.array, window_size: int = 10) -> jnp.array:
+    """Sliding window over an array along the first axis."""
+    arr_strided = jnp.stack([arr[i:(-window_size + i)] for i in range(window_size)], axis=-2)
+    assert arr_strided.shape == (arr.shape[0] - window_size, window_size, arr.shape[-1])
+    return jnp.array(arr_strided)
+
+
 @chex.dataclass
 class RNNState(BNNState):
     hidden_state: Optional[chex.Array] = None
@@ -38,7 +45,6 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
                  ):
         super().__init__(features=features, *args, **kwargs)
         self.hidden_state_size = hidden_state_size
-        self.num_particles = num_particles
         self.model = GRUModel(features=features, num_cells=num_cells,
                               output_dim=self.output_dim, hidden_state_size=hidden_state_size)
         self.normalizer = Normalizer()
@@ -50,6 +56,7 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
                data_stats: DataStats,
                hidden_state: Optional[chex.Array] = None,
                ) -> [chex.Array, chex.Array, chex.Array]:
+        assert x.shape[-1] == self.input_dim
         ndim = x.ndim
         x = x.reshape(-1, self.input_dim)
         x = jax.vmap(self.normalizer.normalize, in_axes=(0, None))(x, data_stats.inputs)
@@ -201,6 +208,7 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
             Tuple[GRUParticleDistribution, GRUParticleDistribution]:
         """Computes the posterior distribution of the ensemble given the input and the data statistics."""
         assert input.shape[-1] == self.input_dim
+        data_stats = rnn_state.data_stats
         v_apply = vmap(self._apply, in_axes=(0, None, None, None), out_axes=0)
         new_hidden_state, means, aleatoric_stds = v_apply(rnn_state.vmapped_params, input, rnn_state.data_stats,
                                                           rnn_state.hidden_state)
@@ -269,14 +277,6 @@ if __name__ == '__main__':
     log_training = False
     window_size = 10
 
-
-    def get_tajectory_windows(arr: jnp.array, window_size: int = 10) -> jnp.array:
-        """Sliding window over an array along the first axis."""
-        arr_strided = jnp.stack([arr[i:(-window_size + i)] for i in range(window_size)], axis=-2)
-        assert arr_strided.shape == (arr.shape[0] - window_size, window_size, arr.shape[-1])
-        return jnp.array(arr_strided)
-
-
     noise_level = 0.1
     d_l, d_u = 0, 10
     xs = jnp.linspace(d_l, d_u, 256).reshape(-1, 1)
@@ -285,19 +285,19 @@ if __name__ == '__main__':
     weights = jnp.repeat(weights[..., None], repeats=2, axis=-1)
     ys = jax.vmap(lambda x, y: jnp.convolve(y, x, 'same'), in_axes=(-1, -1))(ys, weights)
     ys = ys.transpose()
-    ys = ys + noise_level * random.normal(key=random.PRNGKey(0), shape=ys.shape)
+    ys = ys * (1 + noise_level * random.normal(key=random.PRNGKey(0), shape=ys.shape))
     input_dim = xs.shape[-1]
     output_dim = ys.shape[-1]
-    x_train = get_tajectory_windows(xs, window_size=window_size)
-    y_train = get_tajectory_windows(ys, window_size=window_size)
+    x_train = create_windowed_array(xs, window_size=window_size)
+    y_train = create_windowed_array(ys, window_size=window_size)
     data_std = noise_level * jnp.ones(shape=(output_dim,))
 
     normalizer = Normalizer()
     data_stats = normalizer.compute_stats(Data(inputs=xs, outputs=ys))
     data = Data(inputs=x_train, outputs=y_train)
     num_particles = 10
-    model = DeterministicGRUEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
-                                     hidden_state_size=50,
+    model = ProbabilisticGRUEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
+                                     hidden_state_size=20,
                                      num_cells=1, num_particles=num_particles, output_stds=data_std,
                                      logging_wandb=log_training)
     start_time = time.time()
@@ -315,9 +315,9 @@ if __name__ == '__main__':
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
     test_ys = jax.vmap(lambda x, y: jnp.convolve(y, x, 'same'), in_axes=(-1, -1))(test_ys, weights)
     test_ys = test_ys.transpose()
-    test_ys = test_ys + noise_level * random.normal(key=random.PRNGKey(0), shape=test_ys.shape)
-    x_test = get_tajectory_windows(test_xs, window_size=window_size)
-    y_test = get_tajectory_windows(test_ys, window_size=window_size)
+    test_ys = test_ys * (1 + noise_level * random.normal(key=random.PRNGKey(0), shape=test_ys.shape))
+    x_test = create_windowed_array(test_xs, window_size=window_size)
+    y_test = create_windowed_array(test_ys, window_size=window_size)
     alpha_best = model.calibrate(model_params.vmapped_params, x_test, y_test, data_stats)
     f_dist, y_dist = vmap(model.posterior, in_axes=(0, None))(test_xs, model_params)
     pred_mean = f_dist.mean()

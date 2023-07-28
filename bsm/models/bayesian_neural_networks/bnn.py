@@ -35,7 +35,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
     def __init__(self,
                  features: Sequence[int],
                  num_particles: int,
-                 weight_decay: float = 1.0,
+                 weight_decay: float = 1e-4,
                  lr_rate: optax.Schedule | float = optax.constant_schedule(1e-3),
                  num_calibration_ps: int = 10,
                  num_test_alphas: int = 100,

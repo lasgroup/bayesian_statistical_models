@@ -16,7 +16,7 @@ jobs:
       with:
         python-version: '3.11'
     - name: Install dependencies
-      run: pip3 install -r requirements.txt
+      run: pip install .
     - name: Run pytest
       run: |
         export PYTHONPATH=$(pwd)

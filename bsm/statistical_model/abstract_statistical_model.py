@@ -13,7 +13,7 @@ class StatisticalModel(ABC, Generic[ModelState]):
         self.output_dim = output_dim
         self.model = model
 
-    def predict(self,
+    def __call__(self,
                 input: chex.Array,
                 statistical_model_state: StatisticalModelState[ModelState]) -> StatisticalModelOutput[ModelState]:
         assert input.shape == (self.input_dim,)

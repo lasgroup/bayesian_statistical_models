@@ -85,7 +85,7 @@ if __name__ == '__main__':
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
 
-    preds = vmap(model.predict, in_axes=(0, None),
+    preds = vmap(model, in_axes=(0, None),
                  out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
                                                  statistical_model_state=None))(test_xs, statistical_model_state)
 
@@ -108,7 +108,7 @@ if __name__ == '__main__':
     in_domain_test_xs = jnp.linspace(d_l, d_u, num_test_points).reshape(-1, 1)
     in_domain_test_ys = jnp.concatenate([jnp.sin(in_domain_test_xs), jnp.cos(in_domain_test_xs)], axis=1)
 
-    in_domain_preds = vmap(model.predict, in_axes=(0, None),
+    in_domain_preds = vmap(model, in_axes=(0, None),
                            out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
                                                            statistical_model_state=None))(in_domain_test_xs,
                                                                                           statistical_model_state)

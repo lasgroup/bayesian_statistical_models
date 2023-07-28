@@ -29,7 +29,7 @@ num_test_points = 1000
 test_xs = jnp.linspace(-5, 15, num_test_points).reshape(-1, 1)
 test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(3 * test_xs)], axis=1)
 
-preds = vmap(model.predict, in_axes=(0, None),
+preds = vmap(model, in_axes=(0, None),
              out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
                                              statistical_model_state=None))(test_xs, statistical_model_state)
 
@@ -49,7 +49,7 @@ def test_statistical_model_state_of_prediction():
 in_domain_test_xs = jnp.linspace(0, 10, num_test_points).reshape(-1, 1)
 in_domain_test_ys = jnp.concatenate([jnp.sin(in_domain_test_xs), jnp.cos(3 * in_domain_test_xs)], axis=1)
 
-in_domain_preds = vmap(model.predict, in_axes=(0, None),
+in_domain_preds = vmap(model, in_axes=(0, None),
                        out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
                                                        statistical_model_state=None))(in_domain_test_xs,
                                                                                       statistical_model_state)

@@ -2,8 +2,9 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import vmap
 
-from bsm.models.bayesian_recurrent_neural_networks.rnn_ensembles import ProbabilisticGRUEnsemble, create_windowed_array
-from bsm.statistical_model.brnn_statistical_model import BRNNStatisticalModel
+from bsm.bayesian_regression import ProbabilisticGRUEnsemble
+from bsm.statistical_model import BRNNStatisticalModel
+from bsm.utils.general_utils import create_windowed_array
 from bsm.utils.normalization import Data
 from bsm.utils.type_aliases import StatisticalModelOutput
 

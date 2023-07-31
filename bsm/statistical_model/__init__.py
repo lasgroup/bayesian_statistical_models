@@ -1,0 +1,4 @@
+from bsm.statistical_model.abstract_statistical_model import StatisticalModel
+from bsm.statistical_model.bnn_statistical_model import BNNStatisticalModel
+from bsm.statistical_model.brnn_statistical_model import BRNNStatisticalModel
+from bsm.statistical_model.gp_statistical_model import GPStatisticalModel

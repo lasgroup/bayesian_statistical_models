@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 from jax import random, vmap
 from jaxtyping import PyTree
 
-from bsm.models.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
-from bsm.models.bayesian_neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
+from bsm.bayesian_regression.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
+from bsm.bayesian_regression.bayesian_neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
 from bsm.utils.normalization import DataStats, Data
 import wandb
 

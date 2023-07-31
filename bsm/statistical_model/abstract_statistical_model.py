@@ -3,7 +3,7 @@ from typing import Generic
 
 import chex
 
-from bsm.models.bayesian_regression_model import BayesianRegressionModel
+from bsm.bayesian_regression.bayesian_regression_model import BayesianRegressionModel
 from bsm.utils.type_aliases import ModelState, StatisticalModelOutput, StatisticalModelState
 
 

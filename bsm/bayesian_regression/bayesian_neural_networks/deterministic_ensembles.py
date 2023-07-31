@@ -1,25 +1,24 @@
 import time
-from typing import Sequence
 
 import chex
-import flax.linen as nn
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from jax import random, vmap
 from jaxtyping import PyTree
 
 import wandb
-from bsm.models.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
-from bsm.utils.network_utils import MLP
+from bsm.bayesian_regression.bayesian_neural_networks.bnn import BayesianNeuralNet
 from bsm.utils.normalization import DataStats, Data
 
 
-class ProbabilisticEnsemble(DeterministicEnsemble):
-    def __init__(self, features: Sequence[int], sig_min: float = 1e-3, sig_max: float = 1e3, *args, **kwargs):
-        super().__init__(features=features, *args, **kwargs)
-        self.model = MLP(features=features, output_dim=2 * self.output_dim)
-        self.sig_min = sig_min
-        self.sig_max = sig_max
+class DeterministicEnsemble(BayesianNeuralNet):
+    def __init__(self,
+                 output_stds: chex.Array,
+                 *args,
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+        assert output_stds.shape == (self.output_dim,)
+        self.output_stds = output_stds
 
     def _apply_train(self,
                      params: PyTree,
@@ -27,11 +26,8 @@ class ProbabilisticEnsemble(DeterministicEnsemble):
                      data_stats: DataStats) -> [chex.Array, chex.Array]:
         chex.assert_shape(x, (self.input_dim,))
         x = self.normalizer.normalize(x, data_stats.inputs)
-        out = self.model.apply({'params': params}, x)
-        mu, sig = jnp.split(out, 2, axis=-1)
-        sig = nn.softplus(sig)
-        sig = jnp.clip(sig, 0, self.sig_max) + self.sig_min
-        return mu, sig
+        return self.model.apply({'params': params}, x), self.normalizer.normalize_std(self.output_stds,
+                                                                                      data_stats.outputs)
 
     def apply_eval(self,
                    params: PyTree,
@@ -40,12 +36,7 @@ class ProbabilisticEnsemble(DeterministicEnsemble):
         chex.assert_shape(x, (self.input_dim,))
         x = self.normalizer.normalize(x, data_stats.inputs)
         out = self.model.apply({'params': params}, x)
-        mu, sig = jnp.split(out, 2, axis=-1)
-        sig = nn.softplus(sig)
-        sig = jnp.clip(sig, 0, self.sig_max) + self.sig_min
-        mean = self.normalizer.denormalize(mu, data_stats.outputs)
-        std = self.normalizer.denormalize_std(sig, data_stats.outputs)
-        return mean, std
+        return self.normalizer.denormalize(out, data_stats.outputs), self.output_stds
 
 
 if __name__ == '__main__':
@@ -58,15 +49,14 @@ if __name__ == '__main__':
     d_l, d_u = 0, 10
     xs = jnp.linspace(d_l, d_u, 256).reshape(-1, 1)
     ys = jnp.concatenate([jnp.sin(xs), jnp.cos(xs)], axis=1)
-    ys = ys * (1 + noise_level * random.normal(key=random.PRNGKey(0), shape=ys.shape))
+    ys = ys + noise_level * random.normal(key=random.PRNGKey(0), shape=ys.shape)
     data_std = noise_level * jnp.ones(shape=(output_dim,))
 
     data = Data(inputs=xs, outputs=ys)
 
     num_particles = 10
-    model = ProbabilisticEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
+    model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
                                   num_particles=num_particles, output_stds=data_std, logging_wandb=logging_wandb)
-
     start_time = time.time()
     print('Starting with training')
     if logging_wandb:
@@ -78,11 +68,11 @@ if __name__ == '__main__':
     model_state = model.fit_model(data=data, num_epochs=1000)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
-    test_xs = jnp.linspace(-3, 13, 1000).reshape(-1, 1)
+    test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
 
-    test_ys_noisy = test_ys * (1 + noise_level * random.normal(
-        key=random.PRNGKey(0), shape=test_ys.shape))
+    test_ys_noisy = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1) + noise_level * random.normal(
+        key=random.PRNGKey(0), shape=test_ys.shape)
 
     test_stds = noise_level * jnp.ones(shape=test_ys.shape)
 
@@ -99,8 +89,8 @@ if __name__ == '__main__':
             plt.plot(test_xs, f_dist.particle_means[:, i, j], label='NN prediction', color='black', alpha=0.3)
         plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
-                         (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
-                         (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
+                         (pred_mean[..., j] - 2 * eps_std[..., j]).reshape(-1),
+                         (pred_mean[..., j] + 2 * eps_std[..., j]).reshape(-1),
                          label=r'$2\sigma$', alpha=0.3, color='blue')
         handles, labels = plt.gca().get_legend_handles_labels()
         plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
@@ -113,8 +103,8 @@ if __name__ == '__main__':
             plt.plot(test_xs, f_dist.particle_means[:, i, j], label='NN prediction', color='black', alpha=0.3)
         plt.plot(test_xs, f_dist.mean()[..., j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
-                         (pred_mean[..., j] - 2 * total_std[..., j]).reshape(-1),
-                         (pred_mean[..., j] + 2 * total_std[..., j]).reshape(-1),
+                         (pred_mean[..., j] - 2 * eps_std[..., j]).reshape(-1),
+                         (pred_mean[..., j] + 2 * eps_std[..., j]).reshape(-1),
                          label=r'$2\sigma$', alpha=0.3, color='blue')
         handles, labels = plt.gca().get_legend_handles_labels()
         plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')

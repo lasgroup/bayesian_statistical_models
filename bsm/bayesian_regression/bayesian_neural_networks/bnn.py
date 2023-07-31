@@ -18,7 +18,7 @@ from jax.scipy.stats import norm
 from jaxtyping import PyTree
 
 import wandb
-from bsm.models.bayesian_regression_model import BayesianRegressionModel
+from bsm.bayesian_regression.bayesian_regression_model import BayesianRegressionModel
 from bsm.utils.network_utils import MLP
 from bsm.utils.normalization import Normalizer, DataStats, Data
 from bsm.utils.particle_distribution import ParticleDistribution

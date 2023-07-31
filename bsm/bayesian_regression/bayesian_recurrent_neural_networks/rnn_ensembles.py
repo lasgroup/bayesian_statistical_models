@@ -13,21 +13,16 @@ from jaxtyping import PyTree
 import jax.random as jr
 import jax.tree_util as jtu
 from brax.training.replay_buffers import UniformSamplingQueue
-from bsm.models.bayesian_neural_networks.bnn import BNNState
+from bsm.bayesian_regression.bayesian_neural_networks.bnn import BNNState
 
 import wandb
+
+from bsm.utils.general_utils import create_windowed_array
 from bsm.utils.network_utils import GRUModel
 from bsm.utils.normalization import Normalizer, DataStats, Data
-from bsm.models.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
+from bsm.bayesian_regression.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
 import flax.linen as nn
 from bsm.utils.particle_distribution import GRUParticleDistribution
-
-
-def create_windowed_array(arr: jnp.array, window_size: int = 10) -> jnp.array:
-    """Sliding window over an array along the first axis."""
-    arr_strided = jnp.stack([arr[i:(-window_size + i)] for i in range(window_size)], axis=-2)
-    assert arr_strided.shape == (arr.shape[0] - window_size, window_size, arr.shape[-1])
-    return jnp.array(arr_strided)
 
 
 @chex.dataclass

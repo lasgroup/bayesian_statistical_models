@@ -14,8 +14,8 @@ from jax.scipy.stats import multivariate_normal
 from jaxtyping import PyTree
 
 import wandb
-from bsm.models.bayesian_regression_model import BayesianRegressionModel
-from bsm.models.gaussian_processes.kernels import Kernel, RBF
+from bsm.bayesian_regression.bayesian_regression_model import BayesianRegressionModel
+from bsm.bayesian_regression.gaussian_processes.kernels import Kernel, RBF
 from bsm.utils.normal_with_aleatoric import ExtendedNormal
 from bsm.utils.normalization import Normalizer, DataStats, Data
 

@@ -4,11 +4,11 @@ import jax.random as jr
 import optax
 from jax import vmap
 
-from bsm.models.bayesian_neural_networks.bnn import BNNState
-from bsm.models.bayesian_neural_networks.bnn import BayesianNeuralNet
-from bsm.models.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
-from bsm.models.bayesian_neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
-from bsm.models.bayesian_neural_networks.fsvgd_ensemble import DeterministicFSVGDEnsemble, ProbabilisticFSVGDEnsemble
+from bsm.bayesian_regression.bayesian_neural_networks.bnn import BNNState
+from bsm.bayesian_regression.bayesian_neural_networks.bnn import BayesianNeuralNet
+from bsm.bayesian_regression.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
+from bsm.bayesian_regression.bayesian_neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
+from bsm.bayesian_regression.bayesian_neural_networks.fsvgd_ensemble import DeterministicFSVGDEnsemble, ProbabilisticFSVGDEnsemble
 from bsm.statistical_model.abstract_statistical_model import StatisticalModel
 from bsm.utils.normalization import Data
 from bsm.utils.type_aliases import StatisticalModelState, StatisticalModelOutput

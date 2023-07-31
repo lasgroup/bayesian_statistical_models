@@ -4,10 +4,11 @@ import jax.random as jr
 import optax
 from jax import vmap
 
-from bsm.models.bayesian_recurrent_neural_networks.rnn_ensembles import RNNState
-from bsm.models.bayesian_neural_networks.bnn import BayesianNeuralNet
-from bsm.models.bayesian_recurrent_neural_networks.rnn_ensembles import DeterministicGRUEnsemble, \
-    ProbabilisticGRUEnsemble, create_windowed_array
+from bsm.bayesian_regression.bayesian_recurrent_neural_networks.rnn_ensembles import RNNState
+from bsm.bayesian_regression.bayesian_neural_networks.bnn import BayesianNeuralNet
+from bsm.bayesian_regression.bayesian_recurrent_neural_networks.rnn_ensembles import DeterministicGRUEnsemble, \
+    ProbabilisticGRUEnsemble
+from bsm.utils.general_utils import create_windowed_array
 import jax.random as random
 from bsm.statistical_model.abstract_statistical_model import StatisticalModel
 from bsm.utils.normalization import Data

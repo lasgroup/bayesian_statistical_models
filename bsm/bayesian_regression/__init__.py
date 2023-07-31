@@ -5,5 +5,4 @@ from bsm.bayesian_regression.bayesian_neural_networks.fsvgd_ensemble import Prob
 from bsm.bayesian_regression.bayesian_neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
 from bsm.bayesian_regression.bayesian_recurrent_neural_networks.rnn_ensembles import ProbabilisticGRUEnsemble
 from bsm.bayesian_regression.bayesian_recurrent_neural_networks.rnn_ensembles import RNNState, DeterministicGRUEnsemble
-from bsm.utils.general_utils import create_windowed_array
 from bsm.bayesian_regression.gaussian_processes.gaussian_processes import GaussianProcess, GPModelState

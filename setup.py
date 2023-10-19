@@ -3,7 +3,7 @@
 from setuptools import setup, find_packages
 
 required = [
-    'flax>=0.4.1',
+    'flax>=0.4.1,<=0.7.0',
     'jax==0.4.13',
     'jaxtyping>=0.2.20',
     'jaxlib==0.4.13',

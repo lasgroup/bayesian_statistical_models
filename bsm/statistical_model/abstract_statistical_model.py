@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Generic
-
+from jax import vmap
 import chex
 
 from bsm.bayesian_regression.bayesian_regression_model import BayesianRegressionModel
@@ -14,8 +14,8 @@ class StatisticalModel(ABC, Generic[ModelState]):
         self.model = model
 
     def __call__(self,
-                input: chex.Array,
-                statistical_model_state: StatisticalModelState[ModelState]) -> StatisticalModelOutput[ModelState]:
+                 input: chex.Array,
+                 statistical_model_state: StatisticalModelState[ModelState]) -> StatisticalModelOutput[ModelState]:
         assert input.shape == (self.input_dim,)
         outs = self._predict(input, statistical_model_state)
         assert outs.mean.shape == outs.statistical_model_state.beta.shape == (self.output_dim,)
@@ -30,6 +30,13 @@ class StatisticalModel(ABC, Generic[ModelState]):
                                                    aleatoric_std=dist_y.aleatoric_std(),
                                                    statistical_model_state=statistical_model_state)
         return statistical_model
+
+    def predict_batch(self, input: chex.Array,
+                      statistical_model_state: StatisticalModelState[ModelState]) -> StatisticalModelOutput[ModelState]:
+        preds = vmap(self, in_axes=(0, None),
+                     out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
+                                                     statistical_model_state=None))(input, statistical_model_state)
+        return preds
 
     @abstractmethod
     def update(self,

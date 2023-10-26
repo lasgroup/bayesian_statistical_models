@@ -204,7 +204,8 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
         """Computes the posterior distribution of the ensemble given the input and the data statistics."""
         assert input.shape[-1] == self.input_dim
         data_stats = rnn_state.data_stats
-        v_apply = vmap(self._apply, in_axes=(0, None, None, None), out_axes=0)
+        # vmap over parameters and hidden state
+        v_apply = vmap(self._apply, in_axes=(0, None, None, 0), out_axes=0)
         new_hidden_state, means, aleatoric_stds = v_apply(rnn_state.vmapped_params, input, rnn_state.data_stats,
                                                           rnn_state.hidden_state)
         ndim = input.ndim

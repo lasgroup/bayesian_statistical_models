@@ -86,10 +86,7 @@ if __name__ == '__main__':
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
     test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(3 * test_xs)], axis=1)
 
-    preds = vmap(model, in_axes=(0, None),
-                 out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
-                                                 statistical_model_state=None))(test_xs, statistical_model_state)
-
+    preds = model.predict_batch(test_xs, statistical_model_state)
     for j in range(output_dim):
         plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
         plt.plot(test_xs, preds.mean[:, j], label='Mean', color='blue')

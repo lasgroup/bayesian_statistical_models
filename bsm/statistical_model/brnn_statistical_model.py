@@ -54,6 +54,40 @@ class BRNNStatisticalModel(StatisticalModel[RNNState]):
         assert beta.shape == (self.output_dim,)
         return StatisticalModelState(model_state=new_model_state, beta=beta)
 
+    def _predict(self,
+                 input: chex.Array,
+                 statistical_model_state: StatisticalModelState[RNNState]) -> StatisticalModelOutput[RNNState]:
+        dist_f, dist_y = self.model.posterior(input, statistical_model_state.model_state)
+        new_model_state = statistical_model_state.model_state
+        new_model_state = new_model_state.replace(hidden_state=dist_f.particle_hidden_states)
+        new_state = statistical_model_state.replace(model_state=new_model_state)
+        statistical_model_output = StatisticalModelOutput(mean=dist_f.mean(), epistemic_std=dist_f.stddev(),
+                                                          aleatoric_std=dist_y.aleatoric_std(),
+                                                          statistical_model_state=new_state)
+        return statistical_model_output
+
+    def predict_batch(self, input: chex.Array,
+                      statistical_model_state: StatisticalModelState[RNNState]) -> StatisticalModelOutput[RNNState]:
+        # Each input should have a hidden state when making batched predictions.
+        preds = vmap(self, in_axes=(0, StatisticalModelState(
+            beta=None,
+            model_state=RNNState(
+                vmapped_params=None,
+                data_stats=None,
+                calibration_alpha=None,
+                hidden_state=0))),
+                     out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
+                                                     statistical_model_state=
+                                                     StatisticalModelState(
+                                                         beta=None,
+                                                         model_state=RNNState(
+                                                             vmapped_params=None,
+                                                             data_stats=None,
+                                                             calibration_alpha=None,
+                                                             hidden_state=0))
+                                                     ))(input, statistical_model_state)
+        return preds
+
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
@@ -77,9 +111,9 @@ if __name__ == '__main__':
     data = Data(inputs=x_train, outputs=y_train)
 
     model = BRNNStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
-                                beta=jnp.array([1.0, 1.0]), num_particles=10, features=[64, 64, 64],
-                                bnn_type=ProbabilisticGRUEnsemble, train_share=0.6, num_training_steps=2000,
-                                weight_decay=1e-4, hidden_state_size=20, num_cells=1)
+                                 beta=jnp.array([1.0, 1.0]), num_particles=10, features=[64, 64, 64],
+                                 bnn_type=ProbabilisticGRUEnsemble, train_share=0.6, num_training_steps=5000,
+                                 weight_decay=1e-4, hidden_state_size=20, num_cells=1)
 
     init_model_state = model.init(key=jr.PRNGKey(0))
     statistical_model_state = model.update(model_state=init_model_state, data=data)
@@ -90,9 +124,7 @@ if __name__ == '__main__':
     test_ys = vmap(lambda x, y: jnp.convolve(y, x, 'same'), in_axes=(-1, -1))(test_ys, weights)
     test_ys = test_ys.transpose()
 
-    preds = vmap(model, in_axes=(0, None),
-                 out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
-                                                 statistical_model_state=None))(test_xs, statistical_model_state)
+    preds = model.predict_batch(test_xs, statistical_model_state)
 
     for j in range(output_dim):
         plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
@@ -107,6 +139,7 @@ if __name__ == '__main__':
         plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
         by_label = dict(zip(labels, handles))
         plt.legend(by_label.values(), by_label.keys())
+        plt.savefig('RNN_stats_model_1_' + str(j) + '.pdf')
         plt.show()
 
     num_test_points = 1000
@@ -114,12 +147,10 @@ if __name__ == '__main__':
     in_domain_test_ys = jnp.concatenate([jnp.sin(in_domain_test_xs), jnp.cos(in_domain_test_xs)], axis=1)
     in_domain_test_ys = vmap(lambda x, y: jnp.convolve(y, x, 'same'), in_axes=(-1, -1))(in_domain_test_ys, weights)
     in_domain_test_ys = in_domain_test_ys.transpose()
-    in_domain_preds = vmap(model, in_axes=(0, None),
-                           out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
-                                                           statistical_model_state=None))(in_domain_test_xs,
-                                                                                          statistical_model_state)
+    in_domain_preds = model.predict_batch(in_domain_test_xs, statistical_model_state)
     for j in range(output_dim):
         plt.plot(in_domain_test_xs, in_domain_preds.mean[:, j], label='Mean', color='blue')
         plt.plot(in_domain_test_xs, in_domain_test_ys[:, j], label='Fun', color='Green')
         plt.legend()
+        plt.savefig('RNN_stats_model_2.pdf')
         plt.show()

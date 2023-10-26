@@ -41,9 +41,7 @@ test_ys = jnp.concatenate([jnp.sin(test_xs), jnp.cos(test_xs)], axis=1)
 test_ys = vmap(lambda x, y: jnp.convolve(y, x, 'same'), in_axes=(-1, -1))(test_ys, weights)
 test_ys = test_ys.transpose()
 
-preds = vmap(model, in_axes=(0, None),
-             out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
-                                             statistical_model_state=None))(test_xs, statistical_model_state)
+preds = model.predict_batch(test_xs, statistical_model_state)
 
 
 def test_prediction_dimension():
@@ -62,10 +60,7 @@ in_domain_test_ys = jnp.concatenate([jnp.sin(in_domain_test_xs), jnp.cos(in_doma
 in_domain_test_ys = vmap(lambda x, y: jnp.convolve(y, x, 'same'), in_axes=(-1, -1))(in_domain_test_ys, weights)
 in_domain_test_ys = in_domain_test_ys.transpose()
 
-in_domain_preds = vmap(model, in_axes=(0, None),
-                       out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
-                                                       statistical_model_state=None))(in_domain_test_xs,
-                                                                                      statistical_model_state)
+in_domain_preds = model.predict_batch(in_domain_test_xs, statistical_model_state)
 
 
 def test_good_probabilistic_ensemble_fit():

@@ -22,6 +22,16 @@ class StatisticalModel(ABC, Generic[ModelState]):
         assert outs.epistemic_std.shape == outs.aleatoric_std.shape == (self.output_dim,)
         return outs
 
+    @staticmethod
+    def vmap_input_axis(data_axis: int = 0) -> StatisticalModelState:
+        return StatisticalModelState(beta=None, model_state=None)
+
+    @staticmethod
+    def vmap_output_axis(data_axis: int = 0) -> StatisticalModelOutput:
+        return StatisticalModelOutput(mean=data_axis, epistemic_std=data_axis, aleatoric_std=data_axis,
+                                      statistical_model_state=None
+                                      )
+
     def _predict(self,
                  input: chex.Array,
                  statistical_model_state: StatisticalModelState[ModelState]) -> StatisticalModelOutput[ModelState]:
@@ -33,9 +43,8 @@ class StatisticalModel(ABC, Generic[ModelState]):
 
     def predict_batch(self, input: chex.Array,
                       statistical_model_state: StatisticalModelState[ModelState]) -> StatisticalModelOutput[ModelState]:
-        preds = vmap(self, in_axes=(0, None),
-                     out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
-                                                     statistical_model_state=None))(input, statistical_model_state)
+        preds = vmap(self, in_axes=(0, self.vmap_input_axis(0)),
+                     out_axes=self.vmap_output_axis(0))(input, statistical_model_state)
         return preds
 
     @abstractmethod

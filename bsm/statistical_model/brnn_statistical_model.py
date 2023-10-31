@@ -39,6 +39,29 @@ class BRNNStatisticalModel(StatisticalModel[RNNState]):
             beta = optax.constant_schedule(beta)
         self._potential_beta = beta
 
+    @staticmethod
+    def vmap_input_axis(data_axis: int = 0) -> StatisticalModelState:
+        return StatisticalModelState(
+            beta=None,
+            model_state=RNNState(
+                vmapped_params=None,
+                data_stats=None,
+                calibration_alpha=None,
+                hidden_state=data_axis))
+
+    @staticmethod
+    def vmap_output_axis(data_axis: int = 0) -> StatisticalModelOutput:
+        return StatisticalModelOutput(mean=data_axis, epistemic_std=data_axis, aleatoric_std=data_axis,
+                                      statistical_model_state=
+                                      StatisticalModelState(
+                                          beta=None,
+                                          model_state=RNNState(
+                                              vmapped_params=None,
+                                              data_stats=None,
+                                              calibration_alpha=None,
+                                              hidden_state=data_axis))
+                                      )
+
     def init(self, key: chex.PRNGKey) -> RNNState:
         inputs = jnp.zeros(shape=(1, self.input_dim))
         outputs = jnp.zeros(shape=(1, self.output_dim))
@@ -65,28 +88,6 @@ class BRNNStatisticalModel(StatisticalModel[RNNState]):
                                                           aleatoric_std=dist_y.aleatoric_std(),
                                                           statistical_model_state=new_state)
         return statistical_model_output
-
-    def predict_batch(self, input: chex.Array,
-                      statistical_model_state: StatisticalModelState[RNNState]) -> StatisticalModelOutput[RNNState]:
-        # Each input should have a hidden state when making batched predictions.
-        preds = vmap(self, in_axes=(0, StatisticalModelState(
-            beta=None,
-            model_state=RNNState(
-                vmapped_params=None,
-                data_stats=None,
-                calibration_alpha=None,
-                hidden_state=0))),
-                     out_axes=StatisticalModelOutput(mean=0, epistemic_std=0, aleatoric_std=0,
-                                                     statistical_model_state=
-                                                     StatisticalModelState(
-                                                         beta=None,
-                                                         model_state=RNNState(
-                                                             vmapped_params=None,
-                                                             data_stats=None,
-                                                             calibration_alpha=None,
-                                                             hidden_state=0))
-                                                     ))(input, statistical_model_state)
-        return preds
 
 
 if __name__ == '__main__':

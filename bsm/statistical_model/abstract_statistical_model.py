@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
 from typing import Generic
 from jax import vmap
+import jax.numpy as jnp
 import chex
 
 from bsm.bayesian_regression.bayesian_regression_model import BayesianRegressionModel
 from bsm.utils.type_aliases import ModelState, StatisticalModelOutput, StatisticalModelState
+from bsm.utils.normalization import Data
 
 
 class StatisticalModel(ABC, Generic[ModelState]):
@@ -49,10 +51,11 @@ class StatisticalModel(ABC, Generic[ModelState]):
 
     @abstractmethod
     def update(self,
-               statistical_model_state: StatisticalModelState[ModelState],
-               data) -> StatisticalModelState[ModelState]:
+               stats_model_state: StatisticalModelState[ModelState],
+               data: Data) -> StatisticalModelState[ModelState]:
         pass
 
-    @abstractmethod
-    def init(self, key: chex.PRNGKey) -> ModelState:
-        pass
+    def init(self, key: chex.PRNGKey) -> StatisticalModelState[ModelState]:
+        model_state = self.model.init(key)
+        beta = jnp.ones(self.output_dim)
+        return StatisticalModelState(model_state=model_state, beta=beta)

@@ -62,17 +62,8 @@ class BRNNStatisticalModel(StatisticalModel[RNNState]):
                                               hidden_state=data_axis))
                                       )
 
-    def init(self, key: chex.PRNGKey) -> RNNState:
-        inputs = jnp.zeros(shape=(1, self.input_dim))
-        outputs = jnp.zeros(shape=(1, self.output_dim))
-        data = Data(inputs=inputs, outputs=outputs)
-        data_stats = self.model.normalizer.compute_stats(data.inputs)
-        params = self.model.init(key)
-        calibration_alpha = jnp.ones(shape=(self.output_dim,))
-        return RNNState(vmapped_params=params, data_stats=data_stats, calibration_alpha=calibration_alpha)
-
-    def update(self, model_state: RNNState, data: Data) -> StatisticalModelState[RNNState]:
-        new_model_state = self.model.fit_model(data, self.num_training_steps)
+    def update(self, stats_model_state: StatisticalModelState[RNNState], data: Data) -> StatisticalModelState[RNNState]:
+        new_model_state = self.model.fit_model(data, self.num_training_steps, stats_model_state.model_state)
         beta = self._potential_beta(data.inputs.shape[0])
         assert beta.shape == (self.output_dim,)
         return StatisticalModelState(model_state=new_model_state, beta=beta)
@@ -113,11 +104,11 @@ if __name__ == '__main__':
 
     model = BRNNStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
                                  beta=jnp.array([1.0, 1.0]), num_particles=10, features=[64, 64, 64],
-                                 bnn_type=ProbabilisticGRUEnsemble, train_share=0.6, num_training_steps=5000,
+                                 bnn_type=ProbabilisticGRUEnsemble, num_training_steps=5000,
                                  weight_decay=1e-4, hidden_state_size=20, num_cells=1)
 
-    init_model_state = model.init(key=jr.PRNGKey(0))
-    statistical_model_state = model.update(model_state=init_model_state, data=data)
+    init_stats_model_state = model.init(key=jr.PRNGKey(0))
+    statistical_model_state = model.update(stats_model_state=init_stats_model_state, data=data)
 
     # Test on new data
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
@@ -126,14 +117,16 @@ if __name__ == '__main__':
     test_ys = test_ys.transpose()
 
     preds = model.predict_batch(test_xs, statistical_model_state)
+    eps_std = preds.epistemic_std
+    al_std = preds.aleatoric_std
+    total_std = jnp.sqrt(jnp.square(eps_std) + jnp.square(al_std))
 
     for j in range(output_dim):
         plt.scatter(xs.reshape(-1), ys[:, j], label='Data', color='red')
         plt.plot(test_xs, preds.mean[:, j], label='Mean', color='blue')
         plt.fill_between(test_xs.reshape(-1),
-                         (preds.mean[:, j] - preds.statistical_model_state.beta[j] * preds.epistemic_std[:,
-                                                                                     j]).reshape(-1),
-                         (preds.mean[:, j] + preds.statistical_model_state.beta[j] * preds.epistemic_std[:, j]).reshape(
+                         (preds.mean[:, j] - preds.statistical_model_state.beta[j] * total_std[:, j]).reshape(-1),
+                         (preds.mean[:, j] + preds.statistical_model_state.beta[j] * total_std[:, j]).reshape(
                              -1),
                          label=r'$2\sigma$', alpha=0.3, color='blue')
         handles, labels = plt.gca().get_legend_handles_labels()

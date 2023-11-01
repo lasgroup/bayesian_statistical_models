@@ -21,8 +21,8 @@ data = Data(inputs=xs, outputs=ys)
 
 model = GPStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
                            f_norm_bound=3, beta=None)
-model_state = model.init(key=jr.PRNGKey(0))
-statistical_model_state = model.update(model_state=model_state, data=data)
+init_stats_model_state = model.init(key=jr.PRNGKey(0))
+statistical_model_state = model.update(stats_model_state=init_stats_model_state, data=data)
 
 # Test on new data
 num_test_points = 1000

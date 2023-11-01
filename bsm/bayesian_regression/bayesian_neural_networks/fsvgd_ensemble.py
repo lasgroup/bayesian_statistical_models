@@ -128,7 +128,7 @@ if __name__ == '__main__':
     num_particles = 10
     model = ProbabilisticFSVGDEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
                                        num_particles=num_particles, output_stds=data_std, logging_wandb=logging_wandb)
-
+    model_state = model.init(model.key)
     start_time = time.time()
     print('Starting with training')
     if logging_wandb:
@@ -137,7 +137,7 @@ if __name__ == '__main__':
             group='test group',
         )
 
-    model_state = model.fit_model(data=data, num_epochs=1000)
+    model_state = model.fit_model(data=data, num_epochs=1000, model_state=model_state)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
     test_xs = jnp.linspace(-3, 13, 1000).reshape(-1, 1)

@@ -9,10 +9,12 @@ AleatoricStd = chex.Array
 Mean = chex.Array
 Beta = chex.Array
 
+
 @chex.dataclass
 class StatisticalModelState(Generic[ModelState]):
     model_state: ModelState
     beta: Beta
+
 
 @chex.dataclass
 class StatisticalModelOutput(Generic[ModelState]):

@@ -30,16 +30,8 @@ class GPStatisticalModel(StatisticalModel[GPModelState]):
             beta = optax.constant_schedule(beta)
         self._potential_beta = beta
 
-    def init(self, key: chex.PRNGKey) -> GPModelState:
-        inputs = jnp.zeros(shape=(1, self.input_dim))
-        outputs = jnp.zeros(shape=(1, self.output_dim))
-        data = Data(inputs=inputs, outputs=outputs)
-        data_stats = self.model.normalizer.compute_stats(data.inputs)
-        params = self.model.init(key)
-        return GPModelState(params=params, data_stats=data_stats, history=data)
-
-    def update(self, model_state: GPModelState, data: Data) -> StatisticalModelState[GPModelState]:
-        new_model_state = self.model.fit_model(data, self.num_training_steps)
+    def update(self, stats_model_state: StatisticalModelState, data: Data) -> StatisticalModelState[GPModelState]:
+        new_model_state = self.model.fit_model(data, self.num_training_steps, stats_model_state.model_state)
         if self._potential_beta is None:
             beta = self.compute_beta(new_model_state, data)
             return StatisticalModelState(model_state=new_model_state, beta=beta)
@@ -79,8 +71,8 @@ if __name__ == '__main__':
 
     model = GPStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
                                f_norm_bound=3, beta=None)
-    model_state = model.init(key=jr.PRNGKey(0))
-    statistical_model_state = model.update(model_state=model_state, data=data)
+    init_statistical_model_state = model.init(key=jr.PRNGKey(0))
+    statistical_model_state = model.update(stats_model_state=init_statistical_model_state, data=data)
 
     # Test on new data
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)

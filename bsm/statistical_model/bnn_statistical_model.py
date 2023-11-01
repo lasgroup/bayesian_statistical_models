@@ -42,17 +42,8 @@ class BNNStatisticalModel(StatisticalModel[BNNState]):
             beta = optax.constant_schedule(beta)
         self._potential_beta = beta
 
-    def init(self, key: chex.PRNGKey) -> BNNState:
-        inputs = jnp.zeros(shape=(1, self.input_dim))
-        outputs = jnp.zeros(shape=(1, self.output_dim))
-        data = Data(inputs=inputs, outputs=outputs)
-        data_stats = self.model.normalizer.compute_stats(data.inputs)
-        params = self.model.init(key)
-        calibration_alpha = jnp.ones(shape=(self.output_dim,))
-        return BNNState(vmapped_params=params, data_stats=data_stats, calibration_alpha=calibration_alpha)
-
-    def update(self, model_state: BNNState, data: Data) -> StatisticalModelState[BNNState]:
-        new_model_state = self.model.fit_model(data, self.num_training_steps)
+    def update(self, stats_model_state: StatisticalModelState[BNNState], data: Data) -> StatisticalModelState[BNNState]:
+        new_model_state = self.model.fit_model(data, self.num_training_steps, stats_model_state.model_state)
         beta = self._potential_beta(data.inputs.shape[0])
         assert beta.shape == (self.output_dim,)
         return StatisticalModelState(model_state=new_model_state, beta=beta)
@@ -79,7 +70,7 @@ if __name__ == '__main__':
                                 weight_decay=1e-4, )
 
     init_model_state = model.init(key=jr.PRNGKey(0))
-    statistical_model_state = model.update(model_state=init_model_state, data=data)
+    statistical_model_state = model.update(stats_model_state=init_model_state, data=data)
 
     # Test on new data
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)

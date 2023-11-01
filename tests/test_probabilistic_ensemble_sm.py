@@ -24,8 +24,8 @@ model = BNNStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_s
                             bnn_type=ProbabilisticEnsemble, train_share=0.6, num_training_steps=2000,
                             weight_decay=1e-1)
 
-init_model_state = model.init(key=jr.PRNGKey(0))
-statistical_model_state = model.update(model_state=init_model_state, data=data)
+init_stats_model_state = model.init(key=jr.PRNGKey(0))
+statistical_model_state = model.update(stats_model_state=init_stats_model_state, data=data)
 
 # Test on new data
 num_test_points = 1000

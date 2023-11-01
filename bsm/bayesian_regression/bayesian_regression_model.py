@@ -25,5 +25,8 @@ class BayesianRegressionModel(ABC, Generic[ModelState]):
         pass
 
     @abstractmethod
-    def fit_model(self, data: Data, num_epochs: int) -> ModelState:
+    def fit_model(self, data: Data, num_epochs: int, model_state: ModelState) -> ModelState:
+        pass
+
+    def init(self, key: chex.Array) -> ModelState:
         pass

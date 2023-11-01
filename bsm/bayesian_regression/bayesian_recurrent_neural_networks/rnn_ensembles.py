@@ -123,6 +123,16 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
         del variables  # Delete variables to avoid wasting resources
         return params
 
+    def init(self, key: chex.PRNGKey) -> RNNState:
+        inputs = jnp.zeros(shape=(1, self.input_dim))
+        outputs = jnp.zeros(shape=(1, self.output_dim))
+        data = Data(inputs=inputs, outputs=outputs)
+        data_stats = self.normalizer.compute_stats(data.inputs)
+        keys = jr.split(key, self.num_particles)
+        vmapped_params = vmap(self._init)(keys)
+        calibration_alpha = jnp.ones(shape=(self.output_dim,))
+        return RNNState(vmapped_params=vmapped_params, data_stats=data_stats, calibration_alpha=calibration_alpha)
+
     def _calibration_errors(self,
                             vmapped_params: PyTree,
                             inputs: chex.Array,
@@ -164,9 +174,8 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
         cdfs = vmap(calculate_score)(inputs, outputs)
         return jnp.mean(cdfs, axis=0)
 
-    def fit_model(self, data: Data, num_epochs: int) -> RNNState:
-        self.key, key = jr.split(self.key)
-        vmapped_params = self.init(key)
+    def fit_model(self, data: Data, num_epochs: int, model_state: RNNState) -> RNNState:
+        vmapped_params = model_state.vmapped_params
         opt_state = self.tx.init(vmapped_params)
         flattened_data = Data(inputs=data.inputs.reshape(-1, self.input_dim),
                               outputs=data.outputs.reshape(-1, self.output_dim))
@@ -194,9 +203,9 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
             for i in range(num_epochs):
                 wandb.log(jtu.tree_map(lambda x: x[i], statistics))
         calibrate_alpha = self.calibrate(vmapped_params, data.inputs, data.outputs, data_stats)
-        model_state = RNNState(data_stats=data_stats, vmapped_params=vmapped_params,
-                               calibration_alpha=calibrate_alpha)
-        return model_state
+        new_model_state = RNNState(data_stats=data_stats, vmapped_params=vmapped_params,
+                                   calibration_alpha=calibrate_alpha)
+        return new_model_state
 
     @partial(jit, static_argnums=(0,))
     def posterior(self, input: chex.Array, rnn_state: RNNState) -> \
@@ -288,14 +297,13 @@ if __name__ == '__main__':
     y_train = create_windowed_array(ys, window_size=window_size)
     data_std = noise_level * jnp.ones(shape=(output_dim,))
 
-    normalizer = Normalizer()
-    data_stats = normalizer.compute_stats(Data(inputs=xs, outputs=ys))
     data = Data(inputs=x_train, outputs=y_train)
     num_particles = 10
     model = ProbabilisticGRUEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
                                      hidden_state_size=20,
                                      num_cells=1, num_particles=num_particles, output_stds=data_std,
                                      logging_wandb=log_training)
+    init_model_state = model.init(model.key)
     start_time = time.time()
     print('Starting with training')
     if log_training:
@@ -304,7 +312,7 @@ if __name__ == '__main__':
             group='test group',
         )
 
-    model_params = model.fit_model(data, num_epochs=2000)
+    model_params = model.fit_model(data, num_epochs=2000, model_state=init_model_state)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
@@ -312,9 +320,6 @@ if __name__ == '__main__':
     test_ys = jax.vmap(lambda x, y: jnp.convolve(y, x, 'same'), in_axes=(-1, -1))(test_ys, weights)
     test_ys = test_ys.transpose()
     test_ys = test_ys * (1 + noise_level * random.normal(key=random.PRNGKey(0), shape=test_ys.shape))
-    x_test = create_windowed_array(test_xs, window_size=window_size)
-    y_test = create_windowed_array(test_ys, window_size=window_size)
-    alpha_best = model.calibrate(model_params.vmapped_params, x_test, y_test, data_stats)
     f_dist, y_dist = vmap(model.posterior, in_axes=(0, None))(test_xs, model_params)
     pred_mean = f_dist.mean()
     eps_std = f_dist.stddev()

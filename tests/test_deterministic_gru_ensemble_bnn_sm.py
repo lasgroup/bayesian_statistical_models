@@ -28,11 +28,11 @@ data = Data(inputs=x_train, outputs=y_train)
 
 model = BRNNStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
                              beta=jnp.array([1.0, 1.0]), num_particles=10, features=[64, 64, 64],
-                             bnn_type=DeterministicGRUEnsemble, train_share=0.6, num_training_steps=2000,
+                             bnn_type=DeterministicGRUEnsemble, num_training_steps=2000,
                              weight_decay=1e-4, hidden_state_size=20, num_cells=1)
 
-init_model_state = model.init(key=jr.PRNGKey(0))
-statistical_model_state = model.update(model_state=init_model_state, data=data)
+init_stats_model_state = model.init(key=jr.PRNGKey(0))
+statistical_model_state = model.update(stats_model_state=init_stats_model_state, data=data)
 
 # Test on new data
 num_test_points = 1000

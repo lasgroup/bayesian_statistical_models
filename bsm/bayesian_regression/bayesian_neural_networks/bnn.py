@@ -150,9 +150,18 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
         del variables  # Delete variables to avoid wasting resources
         return params
 
-    def init(self, key):
+    def init(self, key) -> BNNState:
+        inputs = jnp.zeros(shape=(1, self.input_dim))
+        outputs = jnp.zeros(shape=(1, self.output_dim))
+        data = Data(inputs=inputs, outputs=outputs)
+        data_stats = self.normalizer.compute_stats(data.inputs)
         keys = jr.split(key, self.num_particles)
-        return vmap(self._init)(keys)
+        vmapped_params = vmap(self._init)(keys)
+        calibration_alpha = jnp.ones(shape=(self.output_dim,))
+        return BNNState(vmapped_params=vmapped_params,
+                        data_stats=data_stats,
+                        calibration_alpha=calibration_alpha,
+                        )
 
     def calibrate(self,
                   vmapped_params: PyTree,
@@ -217,9 +226,8 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
         cdfs = vmap(calculate_score)(inputs, outputs)
         return jnp.mean(cdfs, axis=0)
 
-    def fit_model(self, data: Data, num_epochs: int) -> BNNState:
-        self.key, key = jr.split(self.key)
-        vmapped_params = self.init(key)
+    def fit_model(self, data: Data, num_epochs: int, model_state: BNNState) -> BNNState:
+        vmapped_params = model_state.vmapped_params
         opt_state = self.tx.init(vmapped_params)
         data_stats = self.normalizer.compute_stats(data)
 
@@ -255,6 +263,6 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
             for i in range(num_epochs):
                 wandb.log(jtu.tree_map(lambda x: x[i], statistics))
         calibrate_alpha = self.calibrate(vmapped_params, calibrate_data.inputs, calibrate_data.outputs, data_stats)
-        model_state = BNNState(data_stats=data_stats, vmapped_params=vmapped_params,
-                               calibration_alpha=calibrate_alpha)
-        return model_state
+        new_model_state = BNNState(data_stats=data_stats, vmapped_params=vmapped_params,
+                                   calibration_alpha=calibrate_alpha)
+        return new_model_state

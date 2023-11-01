@@ -17,7 +17,7 @@ import wandb
 from bsm.bayesian_regression.bayesian_regression_model import BayesianRegressionModel
 from bsm.bayesian_regression.gaussian_processes.kernels import Kernel, RBF
 from bsm.utils.normal_with_aleatoric import ExtendedNormal
-from bsm.utils.normalization import Normalizer, DataStats, Data
+from bsm.utils.normalization import Normalizer, DataStats, Data, Stats
 
 
 @chex.dataclass
@@ -55,9 +55,14 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         self.v_kernel_multiple_output = vmap(self.v_kernel, in_axes=(None, None, 0), out_axes=0)
         self.kernel_multiple_output = vmap(self.kernel.apply, in_axes=(None, None, 0), out_axes=0)
 
-    def init(self, key: chex.PRNGKey) -> PyTree:
+    def init(self, key: chex.PRNGKey) -> GPModelState:
         keys = jr.split(key, self.output_dim)
-        return vmap(self.kernel.init)(keys)
+        params = vmap(self.kernel.init)(keys)
+        inputs = jnp.zeros(shape=(1, self.input_dim))
+        outputs = jnp.zeros(shape=(1, self.output_dim))
+        data = Data(inputs=inputs, outputs=outputs)
+        data_stats = self.normalizer.compute_stats(data.inputs)
+        return GPModelState(history=data, data_stats=data_stats, params=params)
 
     def loss(self, vmapped_params, inputs, outputs, data_stats: DataStats):
         assert inputs.shape[0] == outputs.shape[0]
@@ -96,9 +101,9 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
 
     def fit_model(self,
                   data: Data,
-                  num_epochs: int) -> GPModelState:
-        self.key, key = jr.split(self.key)
-        vmapped_params = self.init(key)
+                  num_epochs: int,
+                  model_state: GPModelState) -> GPModelState:
+        vmapped_params = model_state.params
         opt_state = self.tx.init(vmapped_params)
         data_stats = self.normalizer.compute_stats(data)
 
@@ -114,8 +119,8 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
             for i in range(num_epochs):
                 wandb.log(jtu.tree_map(lambda x: x[i], statistics))
 
-        model_state = GPModelState(history=data, data_stats=data_stats, params=vmapped_params)
-        return model_state
+        new_model_state = GPModelState(history=data, data_stats=data_stats, params=vmapped_params)
+        return new_model_state
 
     @partial(jit, static_argnums=0)
     def posterior(self, input, gp_model: GPModelState) -> Tuple[ExtendedNormal, ExtendedNormal]:
@@ -184,6 +189,7 @@ if __name__ == '__main__':
 
     num_particles = 10
     model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, output_stds=data_std)
+    model_state = model.init(model.key)
     start_time = time.time()
     print('Starting with training')
     wandb.init(
@@ -191,7 +197,7 @@ if __name__ == '__main__':
         group='test group',
     )
 
-    model_state = model.fit_model(data=data, num_epochs=1000)
+    model_state = model.fit_model(data=data, num_epochs=1000, model_state=model_state)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)

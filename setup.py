@@ -6,7 +6,7 @@ required = [
     'flax>=0.7.0',
     'jax>=0.4.13',
     'jaxtyping>=0.2.20',
-    'jaxlib>==0.4.13',
+    'jaxlib>=0.4.13',
     'pytest>=7.4.0',
     'matplotlib>=3.5.1',
     'numpy>=1.22.2',

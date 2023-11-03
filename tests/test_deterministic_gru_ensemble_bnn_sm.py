@@ -3,10 +3,9 @@ import jax.random as jr
 from jax import vmap
 
 from bsm.bayesian_regression import DeterministicGRUEnsemble
-from bsm.utils.general_utils import create_windowed_array
 from bsm.statistical_model.brnn_statistical_model import BRNNStatisticalModel
+from bsm.utils.general_utils import create_windowed_array
 from bsm.utils.normalization import Data
-from bsm.utils.type_aliases import StatisticalModelOutput
 
 key = jr.PRNGKey(0)
 input_dim = 1
@@ -61,7 +60,7 @@ in_domain_test_ys = vmap(lambda x, y: jnp.convolve(y, x, 'same'), in_axes=(-1, -
 in_domain_test_ys = in_domain_test_ys.transpose()
 
 in_domain_preds = model.predict_batch(in_domain_test_xs,
-                                                                                      statistical_model_state)
+                                      statistical_model_state)
 
 
 def test_good_probabilistic_ensemble_fit():

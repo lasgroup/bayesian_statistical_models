@@ -1,10 +1,8 @@
 import jax.numpy as jnp
 import jax.random as jr
-from jax import vmap
 
 from bsm.statistical_model import GPStatisticalModel
 from bsm.utils.normalization import Data
-from bsm.utils.type_aliases import StatisticalModelOutput
 
 key = jr.PRNGKey(0)
 input_dim = 1

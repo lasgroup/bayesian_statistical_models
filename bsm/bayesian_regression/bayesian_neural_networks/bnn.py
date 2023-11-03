@@ -5,6 +5,7 @@ from typing import Dict, Tuple
 from typing import Sequence
 
 import chex
+import flax
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -144,7 +145,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
     def _init(self, key):
         variables = self.model.init(key, jnp.ones(shape=(self.input_dim,)))
         if 'params' in variables:
-            stats, params = variables.pop('params')
+            stats, params = flax.core.pop(variables, 'params')
         else:
             stats, params = variables
         del variables  # Delete variables to avoid wasting resources

@@ -30,12 +30,24 @@ class Normalizer:
     def compute_stats(self, data: PyTree) -> PyTree[Stats]:
         return jtu.tree_map(self.get_stats, data)
 
+    def init_stats(self, data: PyTree) -> PyTree[Stats]:
+        return jtu.tree_map(self._init_stats, data)
+
     @partial(jax.jit, static_argnums=0)
     def get_stats(self, data: chex.Array) -> Stats:
         assert data.ndim == 2
         mean = jnp.mean(data, axis=0)
-        std = jnp.std(data, axis=0) + self.num_correction
+        if data.shape[0] > 1:
+            std = jnp.std(data, axis=0) + self.num_correction
+        else:
+            std = jnp.ones_like(mean)
         return Stats(mean, std)
+
+    @partial(jax.jit, static_argnums=0)
+    def _init_stats(self, data: chex.Array) -> Stats:
+        assert data.ndim == 2
+        mean = jnp.mean(data, axis=0)
+        return Stats(jnp.zeros_like(mean), jnp.ones_like(mean))
 
     @partial(jax.jit, static_argnums=0)
     def normalize(self, datum: chex.Array, stats: Stats) -> chex.Array:

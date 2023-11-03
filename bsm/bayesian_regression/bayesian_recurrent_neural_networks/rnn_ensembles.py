@@ -4,6 +4,7 @@ from functools import partial
 from typing import Sequence, Dict, Tuple, Optional
 
 import chex
+import flax
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -117,7 +118,7 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
     def _init(self, key):
         variables = self.model.init(key, jnp.ones(shape=(1, self.input_dim)))
         if 'params' in variables:
-            stats, params = variables.pop('params')
+            stats, params = flax.core.pop(variables, 'params')
         else:
             stats, params = variables
         del variables  # Delete variables to avoid wasting resources

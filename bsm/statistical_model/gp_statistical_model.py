@@ -4,10 +4,10 @@ import jax.random as jr
 import optax
 from jax import vmap
 
-from bsm.statistical_model.abstract_statistical_model import StatisticalModel
 from bsm.bayesian_regression.gaussian_processes.gaussian_processes import GPModelState, GaussianProcess
+from bsm.statistical_model.abstract_statistical_model import StatisticalModel
 from bsm.utils.normalization import Data
-from bsm.utils.type_aliases import StatisticalModelState, StatisticalModelOutput
+from bsm.utils.type_aliases import StatisticalModelState
 
 
 class GPStatisticalModel(StatisticalModel[GPModelState]):
@@ -18,9 +18,11 @@ class GPStatisticalModel(StatisticalModel[GPModelState]):
                  delta: float = 0.1,
                  num_training_steps: int = 1000,
                  beta: chex.Array | optax.Schedule | None = None,
+                 normalize: bool = True,
                  *args, **kwargs
                  ):
-        model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, *args, **kwargs)
+        self.normalize = normalize
+        model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, normalize=normalize, *args, **kwargs)
         super().__init__(input_dim, output_dim, model)
         self.model = model
         self.f_norm_bound = f_norm_bound
@@ -41,8 +43,11 @@ class GPStatisticalModel(StatisticalModel[GPModelState]):
             return StatisticalModelState(model_state=new_model_state, beta=beta)
 
     def compute_beta(self, model_state: GPModelState, data: Data):
-        inputs_norm = vmap(self.model.normalizer.normalize, in_axes=(0, None))(data.inputs,
-                                                                               model_state.data_stats.inputs)
+        if self.normalize:
+            inputs_norm = vmap(self.model.normalizer.normalize, in_axes=(0, None))(data.inputs,
+                                                                                   model_state.data_stats.inputs)
+        else:
+            inputs_norm = data.inputs
         covariance_matrix = self.model.m_kernel_multiple_output(inputs_norm, inputs_norm, model_state.params)
         covariance_matrix = covariance_matrix / (self.model.output_stds ** 2)[:, None, None]
         covariance_matrix = covariance_matrix + jnp.eye(covariance_matrix.shape[-1])[None, :, :]
@@ -92,4 +97,5 @@ if __name__ == '__main__':
         plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
         by_label = dict(zip(labels, handles))
         plt.legend(by_label.values(), by_label.keys())
+        plt.savefig(f'gp_{j}.pdf')
         plt.show()

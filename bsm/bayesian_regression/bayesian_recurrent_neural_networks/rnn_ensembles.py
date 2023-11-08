@@ -24,6 +24,8 @@ from bsm.bayesian_regression.bayesian_neural_networks.deterministic_ensembles im
 import flax.linen as nn
 from bsm.utils.particle_distribution import GRUParticleDistribution
 
+NO_EVAL_VALUE = 123213142134.645954392592
+
 
 @chex.dataclass
 class RNNState(BNNState):
@@ -186,24 +188,97 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
         buffer = UniformSamplingQueue(max_replay_size=num_points, dummy_data_sample=dummy_data_sample,
                                       sample_batch_size=self.batch_size)
 
-        self.key, key = jr.split(self.key)
-        buffer_state = buffer.init(key)
-        buffer_state = buffer.insert(buffer_state, data)
+        eval_buffer = UniformSamplingQueue(max_replay_size=num_points, dummy_data_sample=dummy_data_sample,
+                                           sample_batch_size=self.eval_batch_size)
 
-        def f(carry, _):
-            opt_state, vmapped_params, buffer_state = carry
+        self.key, key_buffer, key_eval_buffer = jr.split(self.key, 3)
+        buffer_state = buffer.init(key_buffer)
+        eval_buffer_state = eval_buffer.init(key_eval_buffer)
+
+        if self.eval_frequency:
+            eval_frequency = self.eval_frequency
+        else:
+            eval_frequency = -1
+        # Prepare data
+        self.key, key = jr.split(self.key)
+        permuted_data = jtu.tree_map(lambda x: jr.permutation(key, x), data)
+
+        if self.train_share < 1.0:
+            # Taking self.train_share number of points for training
+            train_data = jtu.tree_map(lambda x: x[:int(self.train_share * num_points)], permuted_data)
+            # Taking the rest for calibration
+            eval_data = jtu.tree_map(lambda x: x[int(self.train_share * num_points):], permuted_data)
+        else:
+            train_data = permuted_data
+            eval_data = permuted_data
+
+        buffer_state = buffer.insert(buffer_state, train_data)
+        eval_buffer_state = eval_buffer.insert(eval_buffer_state, eval_data)
+        best_nll = 1e12
+
+        def evaluate_model(vmapped_params, eval_data, stats, best_params, best_nll):
+            eval_nll, eval_mse = self.loss(vmapped_params, eval_data.inputs,
+                                           eval_data.outputs, data_stats)
+            stats = OrderedDict(eval_nll=eval_nll, eval_mse=eval_mse, **stats)
+
+            new_best_params, new_best_nll = jax.lax.cond(
+                eval_nll < best_nll,
+                lambda: (vmapped_params, eval_nll),
+                lambda: (best_params, best_nll)
+            )
+            return stats, new_best_params, new_best_nll
+
+        def skip_evaluation(vmapped_params, eval_data, stats, best_params, best_nll):
+            stats = OrderedDict(eval_nll=NO_EVAL_VALUE, eval_mse=NO_EVAL_VALUE, **stats)
+            return stats, best_params, best_nll
+
+        def f(carry, ins):
+            opt_state, vmapped_params, buffer_state, best_params, best_nll, eval_buffer_state = carry
             new_buffer_state, data_batch = buffer.sample(buffer_state)
             opt_state, vmapped_params, statistics = self.step_jit(opt_state, vmapped_params, data_batch.inputs,
                                                                   data_batch.outputs, data_stats)
-            return (opt_state, vmapped_params, new_buffer_state), statistics
+            new_eval_buffer_state, eval_data_batch = eval_buffer.sample(eval_buffer_state)
 
-        init_carry = (opt_state, vmapped_params, buffer_state)
-        (opt_state, vmapped_params, buffer_state), statistics = jax.lax.scan(f, init_carry, None, length=num_epochs)
+            statistics, best_params, best_nll = jax.lax.cond(
+                ins % eval_frequency,
+                skip_evaluation,
+                evaluate_model,
+                vmapped_params,
+                eval_data_batch,
+                statistics,
+                best_params,
+                best_nll
+            )
+
+            return (opt_state, vmapped_params, new_buffer_state, best_params, best_nll, new_eval_buffer_state), \
+                statistics
+
+        init_carry = (opt_state, vmapped_params, buffer_state, vmapped_params, best_nll, eval_buffer_state)
+        iterations = jnp.arange(start=0, step=1, stop=num_epochs, dtype=jnp.int32)
+        (opt_state, vmapped_params, buffer_state, best_params, best_nll, eval_buffer_state), statistics = \
+            jax.lax.scan(f, init_carry, iterations, length=num_epochs)
+        train_statistics = OrderedDict(nll=statistics['nll'], mse=statistics['mse'])
+        eval_statistics = OrderedDict(eval_nll=statistics['eval_nll'], eval_mse=statistics['eval_mse'])
+
+        desired_params = vmapped_params
+        if self.return_best_model:
+            desired_params = best_params
+
         if self.logging_wandb:
             for i in range(num_epochs):
-                wandb.log(jtu.tree_map(lambda x: x[i], statistics))
-        calibrate_alpha = self.calibrate(vmapped_params, data.inputs, data.outputs, data_stats)
-        new_model_state = RNNState(data_stats=data_stats, vmapped_params=vmapped_params,
+                wandb.log(jtu.tree_map(lambda x: x[i], train_statistics))
+                if i % eval_frequency == 0:
+                    wandb.log(jtu.tree_map(lambda x: x[i], eval_statistics))
+        if self.train_share > 0:
+            if eval_data.inputs.shape[0] > self.eval_batch_size:
+                new_eval_buffer_state, data_batch = eval_buffer.sample(eval_buffer_state)
+                calibrate_alpha = self.calibrate(desired_params, data_batch.inputs, data_batch.outputs, data_stats)
+            else:
+                calibrate_alpha = self.calibrate(desired_params, eval_data.inputs, eval_data.outputs, data_stats)
+        else:
+            calibrate_alpha = jnp.ones(self.output_dim)
+
+        new_model_state = RNNState(data_stats=data_stats, vmapped_params=desired_params,
                                    calibration_alpha=calibrate_alpha)
         return new_model_state
 
@@ -302,7 +377,7 @@ if __name__ == '__main__':
     model = ProbabilisticGRUEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
                                      hidden_state_size=20,
                                      num_cells=1, num_particles=num_particles, output_stds=data_std,
-                                     logging_wandb=log_training)
+                                     logging_wandb=log_training, eval_frequency=5, return_best_model=True)
     init_model_state = model.init(model.key)
     start_time = time.time()
     print('Starting with training')

@@ -6,7 +6,6 @@ from bsm.bayesian_regression import ProbabilisticGRUEnsemble
 from bsm.statistical_model import BRNNStatisticalModel
 from bsm.utils.general_utils import create_windowed_array
 from bsm.utils.normalization import Data
-from bsm.utils.type_aliases import StatisticalModelOutput
 
 key = jr.PRNGKey(0)
 input_dim = 1

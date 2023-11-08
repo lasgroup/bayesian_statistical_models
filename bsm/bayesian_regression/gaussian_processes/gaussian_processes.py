@@ -17,7 +17,7 @@ import wandb
 from bsm.bayesian_regression.bayesian_regression_model import BayesianRegressionModel
 from bsm.bayesian_regression.gaussian_processes.kernels import Kernel, RBF
 from bsm.utils.normal_with_aleatoric import ExtendedNormal
-from bsm.utils.normalization import Normalizer, DataStats, Data, Stats
+from bsm.utils.normalization import Normalizer, DataStats, Data
 
 
 @chex.dataclass
@@ -35,10 +35,12 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
                  lr_rate: optax.Schedule | float = optax.constant_schedule(1e-2),
                  seed: int = 0,
                  logging_wandb: bool = True,
+                 normalize: bool = True,
                  *args,
                  **kwargs
                  ):
         super().__init__(*args, **kwargs)
+        self.normalize = normalize
         if kernel is None:
             kernel = RBF(self.input_dim)
         self.kernel = kernel
@@ -56,13 +58,16 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         self.kernel_multiple_output = vmap(self.kernel.apply, in_axes=(None, None, 0), out_axes=0)
 
     def init(self, key: chex.PRNGKey) -> GPModelState:
-        keys = jr.split(key, self.output_dim)
-        params = vmap(self.kernel.init)(keys)
         inputs = jnp.zeros(shape=(1, self.input_dim))
         outputs = jnp.zeros(shape=(1, self.output_dim))
         data = Data(inputs=inputs, outputs=outputs)
-        data_stats = self.normalizer.compute_stats(data.inputs)
-        return GPModelState(history=data, data_stats=data_stats, params=params)
+        if self.normalize:
+            data_stats = self.normalizer.compute_stats(data.inputs)
+        else:
+            data_stats = self.normalizer.init_stats(data.inputs)
+        keys = jr.split(key, self.output_dim)
+        params = vmap(self.kernel.init)(keys)
+        return GPModelState(params=params, data_stats=data_stats, history=data)
 
     def loss(self, vmapped_params, inputs, outputs, data_stats: DataStats):
         assert inputs.shape[0] == outputs.shape[0]
@@ -105,7 +110,10 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
                   model_state: GPModelState) -> GPModelState:
         vmapped_params = model_state.params
         opt_state = self.tx.init(vmapped_params)
-        data_stats = self.normalizer.compute_stats(data)
+        if self.normalize:
+            data_stats = self.normalizer.compute_stats(data)
+        else:
+            data_stats = self.normalizer.init_stats(data)
 
         def f(carry, _):
             opt_state, vmapped_params = carry

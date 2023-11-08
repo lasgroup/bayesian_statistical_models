@@ -47,7 +47,7 @@ if __name__ == '__main__':
 
     noise_level = 0.1
     d_l, d_u = 0, 10
-    xs = jnp.linspace(d_l, d_u, 256).reshape(-1, 1)
+    xs = jnp.linspace(d_l, d_u, 32).reshape(-1, 1)
     ys = jnp.concatenate([jnp.sin(xs), jnp.cos(xs)], axis=1)
     ys = ys + noise_level * random.normal(key=random.PRNGKey(0), shape=ys.shape)
     data_std = noise_level * jnp.ones(shape=(output_dim,))

@@ -2,16 +2,16 @@ import chex
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jax import vmap
 
 from bsm.bayesian_regression.bayesian_neural_networks.bnn import BNNState
 from bsm.bayesian_regression.bayesian_neural_networks.bnn import BayesianNeuralNet
 from bsm.bayesian_regression.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
+from bsm.bayesian_regression.bayesian_neural_networks.fsvgd_ensemble import DeterministicFSVGDEnsemble, \
+    ProbabilisticFSVGDEnsemble
 from bsm.bayesian_regression.bayesian_neural_networks.probabilistic_ensembles import ProbabilisticEnsemble
-from bsm.bayesian_regression.bayesian_neural_networks.fsvgd_ensemble import DeterministicFSVGDEnsemble, ProbabilisticFSVGDEnsemble
 from bsm.statistical_model.abstract_statistical_model import StatisticalModel
 from bsm.utils.normalization import Data
-from bsm.utils.type_aliases import StatisticalModelState, StatisticalModelOutput
+from bsm.utils.type_aliases import StatisticalModelState
 
 
 class BNNStatisticalModel(StatisticalModel[BNNState]):
@@ -91,6 +91,7 @@ if __name__ == '__main__':
         plt.plot(test_xs.reshape(-1), test_ys[:, j], label='True', color='green')
         by_label = dict(zip(labels, handles))
         plt.legend(by_label.values(), by_label.keys())
+        plt.savefig(f'bnn_{j}.pdf')
         plt.show()
 
     num_test_points = 1000

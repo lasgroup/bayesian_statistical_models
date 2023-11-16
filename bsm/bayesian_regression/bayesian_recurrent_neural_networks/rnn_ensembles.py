@@ -24,6 +24,7 @@ from bsm.utils.normalization import Normalizer, DataStats, Data
 from bsm.bayesian_regression.bayesian_neural_networks.deterministic_ensembles import DeterministicEnsemble
 import flax.linen as nn
 from bsm.utils.particle_distribution import GRUParticleDistribution
+from bsm.bayesian_regression.bayesian_neural_networks.fsvgd_ensemble import prepare_stein_kernel
 
 NO_EVAL_VALUE = 123213142134.645954392592
 
@@ -97,9 +98,18 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
 
         target_outputs_norm = vmap(vmap(self.normalizer.normalize, in_axes=(0, None)), in_axes=(0, None)) \
             (outputs, data_stats.outputs)
-        negative_log_likelihood = self._neg_log_posterior(predicted_outputs, predicted_stds, target_outputs_norm)
+        loss = jax.vmap(self.per_step_loss, in_axes=(-2, -2, -2))\
+            (predicted_outputs, predicted_stds, target_outputs_norm)
+        loss = loss.mean()
         mse = jnp.mean((predicted_outputs - target_outputs_norm[None, ...]) ** 2)
-        return negative_log_likelihood, mse
+        return loss, mse
+
+    def per_step_loss(self,
+                      predicted_outputs: chex.Array,
+                      predicted_stds: chex.Array,
+                      target_outputs: jax.Array
+                      ):
+        return self._neg_log_posterior(predicted_outputs, predicted_stds, target_outputs)
 
     @partial(jit, static_argnums=0)
     def eval_ll(self,

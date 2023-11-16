@@ -95,7 +95,10 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
              predicted_outputs: chex.Array,
              predicted_stds: chex.Array,
              target_outputs: chex.Array) -> chex.Array:
-        chex.assert_equal_shape([target_outputs, predicted_stds[0, ...], predicted_outputs[0, ...]])
+        # chex.assert_equal_shape([target_outputs, predicted_stds[0, ...], predicted_outputs[0, ...]])
+        chex.assert_shape(target_outputs, (self.output_dim,))
+        chex.assert_shape(predicted_stds, (self.output_dim,))
+        chex.assert_shape(predicted_outputs, (self.output_dim,))
         log_prob = norm.logpdf(target_outputs[jnp.newaxis, :], loc=predicted_outputs, scale=predicted_stds)
         return - jnp.mean(log_prob)
 
@@ -103,8 +106,8 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
                            predicted_outputs: chex.Array,
                            predicted_stds: chex.Array,
                            target_outputs: jax.Array) -> chex.Array:
-        nll = self._nll(predicted_outputs, predicted_stds, target_outputs)
-        neg_log_post = nll
+        nll = jax.vmap(jax.vmap(self._nll), in_axes=(0, 0, None))(predicted_outputs, predicted_stds, target_outputs)
+        neg_log_post = nll.mean()
         return neg_log_post
 
     def loss(self,

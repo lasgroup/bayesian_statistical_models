@@ -167,7 +167,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
         inputs = jnp.zeros(shape=(1, self.input_dim))
         outputs = jnp.zeros(shape=(1, self.output_dim))
         data = Data(inputs=inputs, outputs=outputs)
-        data_stats = self.normalizer.compute_stats(data.inputs)
+        data_stats = self.normalizer.compute_stats(data)
         keys = jr.split(key, self.num_particles)
         vmapped_params = vmap(self._init)(keys)
         calibration_alpha = jnp.ones(shape=(self.output_dim,))

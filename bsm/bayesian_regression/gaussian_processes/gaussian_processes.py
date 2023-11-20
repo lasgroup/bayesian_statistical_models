@@ -62,9 +62,9 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         outputs = jnp.zeros(shape=(1, self.output_dim))
         data = Data(inputs=inputs, outputs=outputs)
         if self.normalize:
-            data_stats = self.normalizer.compute_stats(data.inputs)
+            data_stats = self.normalizer.compute_stats(data)
         else:
-            data_stats = self.normalizer.init_stats(data.inputs)
+            data_stats = self.normalizer.init_stats(data)
         keys = jr.split(key, self.output_dim)
         params = vmap(self.kernel.init)(keys)
         return GPModelState(params=params, data_stats=data_stats, history=data)

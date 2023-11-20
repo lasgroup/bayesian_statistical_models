@@ -363,28 +363,6 @@ class ProbabilisticGRUEnsemble(DeterministicGRUEnsemble):
         return new_hidden_state, mean, sig
 
 
-class DeterministicGRUFSVGEnsemble(DeterministicGRUEnsemble):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.stein_kernel, self.stein_kernel_derivative = prepare_stein_kernel()
-
-    def per_step_loss(self,
-                      predicted_outputs: chex.Array,
-                      predicted_stds: chex.Array,
-                      target_outputs: jax.Array
-                      ):
-        negative_log_likelihood, grad_post = jax.value_and_grad(self._neg_log_posterior)(predicted_outputs,
-                                                                                         predicted_stds,
-                                                                                         target_outputs)
-        # kernel
-        k = self.stein_kernel(predicted_outputs)
-        k_x = self.stein_kernel_derivative(predicted_outputs)
-        grad_k = jnp.mean(k_x, axis=0)
-        surrogate_loss = jnp.sum(predicted_outputs * jax.lax.stop_gradient(
-            jnp.einsum('ij,jkm', k, grad_post) - grad_k))
-        return surrogate_loss.mean()
-
-
 if __name__ == '__main__':
     key = random.PRNGKey(0)
     log_training = False

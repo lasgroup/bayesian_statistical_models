@@ -140,7 +140,7 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
         inputs = jnp.zeros(shape=(1, self.input_dim))
         outputs = jnp.zeros(shape=(1, self.output_dim))
         data = Data(inputs=inputs, outputs=outputs)
-        data_stats = self.normalizer.compute_stats(data.inputs)
+        data_stats = self.normalizer.compute_stats(data)
         keys = jr.split(key, self.num_particles)
         vmapped_params = vmap(self._init)(keys)
         calibration_alpha = jnp.ones(shape=(self.output_dim,))
@@ -176,7 +176,7 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
             means, epistemic_stds = predicted_outputs.mean(axis=0), predicted_outputs.std(axis=0)
             aleatoric_var = jnp.square(predicted_stds).mean(axis=0)
             std = jnp.sqrt((epistemic_stds * alpha) ** 2 + aleatoric_var)
-            cdfs = vmap(vmap(norm.cdf))(y, means, std)
+            cdfs = vmap(norm.cdf)(y, means, std)
 
             def check_cdf(cdf):
                 chex.assert_shape(cdf, ())
@@ -361,6 +361,28 @@ class ProbabilisticGRUEnsemble(DeterministicGRUEnsemble):
         assert mean.shape[-1] == self.output_dim and sig.shape[-1] == self.output_dim
         assert new_hidden_state.shape[-1] == self.hidden_size
         return new_hidden_state, mean, sig
+
+
+class DeterministicGRUFSVGEnsemble(DeterministicGRUEnsemble):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.stein_kernel, self.stein_kernel_derivative = prepare_stein_kernel()
+
+    def per_step_loss(self,
+                      predicted_outputs: chex.Array,
+                      predicted_stds: chex.Array,
+                      target_outputs: jax.Array
+                      ):
+        negative_log_likelihood, grad_post = jax.value_and_grad(self._neg_log_posterior)(predicted_outputs,
+                                                                                         predicted_stds,
+                                                                                         target_outputs)
+        # kernel
+        k = self.stein_kernel(predicted_outputs)
+        k_x = self.stein_kernel_derivative(predicted_outputs)
+        grad_k = jnp.mean(k_x, axis=0)
+        surrogate_loss = jnp.sum(predicted_outputs * jax.lax.stop_gradient(
+            jnp.einsum('ij,jkm', k, grad_post) - grad_k))
+        return surrogate_loss.mean()
 
 
 if __name__ == '__main__':

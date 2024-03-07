@@ -10,7 +10,10 @@ from bsm.utils.normalization import Data
 
 
 class StatisticalModel(ABC, Generic[ModelState]):
-    def __init__(self, input_dim: int, output_dim: int, model: BayesianRegressionModel[ModelState]):
+    def __init__(self,
+                 input_dim: int,
+                 output_dim: int,
+                 model: BayesianRegressionModel[ModelState]):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.model = model
@@ -43,7 +46,8 @@ class StatisticalModel(ABC, Generic[ModelState]):
                                                    statistical_model_state=statistical_model_state)
         return statistical_model
 
-    def predict_batch(self, input: chex.Array,
+    def predict_batch(self,
+                      input: chex.Array,
                       statistical_model_state: StatisticalModelState[ModelState]) -> StatisticalModelOutput[ModelState]:
         preds = vmap(self, in_axes=(0, self.vmap_input_axis(0)),
                      out_axes=self.vmap_output_axis(0))(input, statistical_model_state)
@@ -55,7 +59,8 @@ class StatisticalModel(ABC, Generic[ModelState]):
                data: Data) -> StatisticalModelState[ModelState]:
         pass
 
-    def init(self, key: chex.PRNGKey) -> StatisticalModelState[ModelState]:
+    def init(self,
+             key: chex.PRNGKey) -> StatisticalModelState[ModelState]:
         model_state = self.model.init(key)
         beta = jnp.ones(self.output_dim)
         return StatisticalModelState(model_state=model_state, beta=beta)

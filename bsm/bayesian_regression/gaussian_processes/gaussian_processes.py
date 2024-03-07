@@ -150,14 +150,17 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         noise_term = extended_eye * outputs_stds_norm[:, None, None] ** 2
         noisy_covariance_matrix = covariance_matrix + noise_term
 
-        k_x_X = vmap(self.v_kernel, in_axes=(None, None, 0), out_axes=0)(history_inputs_norm, input_norm,
-                                                                         gp_model.params)
+        k_x_X = vmap(self.v_kernel,
+                     in_axes=(None, None, 0),
+                     out_axes=0)(history_inputs_norm, input_norm, gp_model.params)
         cholesky_tuples = vmap(jax.scipy.linalg.cho_factor)(noisy_covariance_matrix)
 
         # Compute posterior std
-        denoised_var = vmap(jax.scipy.linalg.cho_solve, in_axes=((0, None), 0))((cholesky_tuples[0], False), k_x_X)
-        var = vmap(self.kernel.apply, in_axes=(None, None, 0))(input_norm, input_norm, gp_model.params) - vmap(jnp.dot)(
-            k_x_X, denoised_var)
+        denoised_var = vmap(jax.scipy.linalg.cho_solve,
+                            in_axes=((0, None), 0))((cholesky_tuples[0], False), k_x_X)
+        var = vmap(self.kernel.apply,
+                   in_axes=(None, None, 0))(input_norm, input_norm, gp_model.params) - vmap(jnp.dot)(k_x_X,
+                                                                                                     denoised_var)
         std = jnp.sqrt(var)
 
         # Compute posterior mean

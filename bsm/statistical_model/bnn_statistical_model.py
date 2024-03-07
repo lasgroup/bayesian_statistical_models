@@ -42,7 +42,13 @@ class BNNStatisticalModel(StatisticalModel[BNNState]):
             beta = optax.constant_schedule(beta)
         self._potential_beta = beta
 
-    def update(self, stats_model_state: StatisticalModelState[BNNState], data: Data) -> StatisticalModelState[BNNState]:
+    def update(self,
+               stats_model_state: StatisticalModelState[BNNState],
+               data: Data) -> StatisticalModelState[BNNState]:
+        """
+        stats_model_state: statistical model state
+        data: Data on which we train the statistical model
+        """
         new_model_state = self.model.fit_model(data, self.num_training_steps, stats_model_state.model_state)
         beta = self._potential_beta(data.inputs.shape[0])
         assert beta.shape == (self.output_dim,)
@@ -66,7 +72,7 @@ if __name__ == '__main__':
 
     model = BNNStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
                                 beta=jnp.array([1.0, 1.0]), num_particles=10, features=[64, 64, 64],
-                                bnn_type=ProbabilisticFSVGDEnsemble, train_share=0.6, num_training_steps=2000,
+                                bnn_type=DeterministicEnsemble, train_share=0.6, num_training_steps=2000,
                                 weight_decay=1e-4, )
 
     init_model_state = model.init(key=jr.PRNGKey(0))

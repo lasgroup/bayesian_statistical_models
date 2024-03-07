@@ -57,6 +57,10 @@ class StatisticalModel(ABC, Generic[ModelState]):
     def update(self,
                stats_model_state: StatisticalModelState[ModelState],
                data: Data) -> StatisticalModelState[ModelState]:
+        """
+        stats_model_state: statistical model state
+        data: Data on which we train the statistical model
+        """
         pass
 
     def init(self,

@@ -45,10 +45,6 @@ class BNNStatisticalModel(StatisticalModel[BNNState]):
     def update(self,
                stats_model_state: StatisticalModelState[BNNState],
                data: Data) -> StatisticalModelState[BNNState]:
-        """
-        stats_model_state: statistical model state
-        data: Data on which we train the statistical model
-        """
         new_model_state = self.model.fit_model(data, self.num_training_steps, stats_model_state.model_state)
         beta = self._potential_beta(data.inputs.shape[0])
         assert beta.shape == (self.output_dim,)

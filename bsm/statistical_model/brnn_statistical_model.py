@@ -105,6 +105,7 @@ if __name__ == '__main__':
     model = BRNNStatisticalModel(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
                                  beta=jnp.array([1.0, 1.0]), num_particles=10, features=[64, 64, 64],
                                  bnn_type=ProbabilisticGRUEnsemble, num_training_steps=5000,
+                                 train_sequence_length=window_size,
                                  weight_decay=1e-4, hidden_state_size=20, num_cells=1)
 
     init_stats_model_state = model.init(key=jr.PRNGKey(0))

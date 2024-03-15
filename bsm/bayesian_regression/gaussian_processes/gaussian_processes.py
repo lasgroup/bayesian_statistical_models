@@ -104,16 +104,11 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         statiscs = OrderedDict(nll=loss)
         return opt_state, vmapped_params, statiscs
 
-    def fit_model(self,
-                  data: Data,
-                  num_epochs: int,
-                  model_state: GPModelState) -> GPModelState:
+    @partial(jax.jit, static_argnums=(0, 1))
+    def _train_model(self, num_epochs: int, model_state: GPModelState, data_stats: DataStats, data: Data) \
+            -> [GPModelState, OrderedDict]:
         vmapped_params = model_state.params
         opt_state = self.tx.init(vmapped_params)
-        if self.normalize:
-            data_stats = self.normalizer.compute_stats(data)
-        else:
-            data_stats = self.normalizer.init_stats(data)
 
         def f(carry, _):
             opt_state, vmapped_params = carry
@@ -122,12 +117,25 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
             return (opt_state, vmapped_params), statistics
 
         (opt_state, vmapped_params), statistics = scan(f, (opt_state, vmapped_params), None, length=num_epochs)
+        new_model_state = GPModelState(history=data, data_stats=data_stats, params=vmapped_params)
+        return new_model_state, statistics
+
+    def fit_model(self,
+                  data: Data,
+                  num_epochs: int,
+                  model_state: GPModelState) -> GPModelState:
+
+        if self.normalize:
+            data_stats = self.normalizer.compute_stats(data)
+        else:
+            data_stats = self.normalizer.init_stats(data)
+
+        new_model_state, statistics = self._train_model(num_epochs, model_state, data_stats, data)
 
         if self.logging_wandb:
             for i in range(num_epochs):
                 wandb.log(jtu.tree_map(lambda x: x[i], statistics))
 
-        new_model_state = GPModelState(history=data, data_stats=data_stats, params=vmapped_params)
         return new_model_state
 
     @partial(jit, static_argnums=0)
@@ -185,6 +193,7 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
 if __name__ == '__main__':
     import time
     import matplotlib.pyplot as plt
+    jax.config.update('jax_log_compiles', True)
 
     key = jr.PRNGKey(0)
     input_dim = 1
@@ -198,18 +207,21 @@ if __name__ == '__main__':
     data_std = noise_level * jnp.ones(shape=(output_dim,))
     data = DataStats(inputs=xs, outputs=ys)
 
+    logging = False
     num_particles = 10
-    model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, output_stds=data_std)
+    model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False)
     model_state = model.init(model.key)
     start_time = time.time()
     print('Starting with training')
-    wandb.init(
-        project='Pendulum',
-        group='test group',
-    )
+    if logging:
+        wandb.init(
+            project='Pendulum',
+            group='test group',
+        )
 
     model_state = model.fit_model(data=data, num_epochs=1000, model_state=model_state)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
+    model_state = model.fit_model(data=data, num_epochs=1000, model_state=model_state)
 
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
     preds = vmap(model.posterior, in_axes=(0, None))(test_xs, model_state)[0]

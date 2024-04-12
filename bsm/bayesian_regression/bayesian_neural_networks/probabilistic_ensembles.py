@@ -30,7 +30,7 @@ class ProbabilisticEnsemble(DeterministicEnsemble):
         out = self.model.apply({'params': params}, x)
         mu, sig = jnp.split(out, 2, axis=-1)
         sig = nn.softplus(sig)
-        sig = jnp.clip(sig, 0, self.sig_max) + self.sig_min
+        sig = jnp.clip(sig, self.sig_min, self.sig_max)
         return mu, sig
 
     def apply_eval(self,

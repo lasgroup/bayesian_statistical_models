@@ -189,7 +189,10 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
             predicted_outputs, predicted_stds = apply_ensemble_one(vmapped_params, x, data_stats)
             means, epistemic_stds = predicted_outputs.mean(axis=0), predicted_outputs.std(axis=0)
             aleatoric_var = jnp.square(predicted_stds).mean(axis=0)
-            std = jnp.sqrt((epistemic_stds * alpha) ** 2 + aleatoric_var)
+            if self.include_aleatoric_std_for_calibration:
+                std = jnp.sqrt(epistemic_stds ** 2 + aleatoric_var) * alpha
+            else:
+                std = epistemic_stds * alpha
             cdfs = vmap(norm.cdf)(y, means, std)
 
             def check_cdf(cdf):

@@ -52,6 +52,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
                  eval_frequency: int | None = None,
                  return_best_model: bool = False,
                  max_buffer_size: int = 1_000_000,
+                 include_aleatoric_std_for_calibration: bool = False,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_particles = num_particles
@@ -71,6 +72,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
                                                                         "evaluating"
         self._eval_frequency = eval_frequency
         self.set_up_data_buffers()
+        self.include_aleatoric_std_for_calibration = include_aleatoric_std_for_calibration
 
     def set_up_data_buffers(self):
         dummy_data_sample = Data(inputs=jnp.zeros(self.input_dim), outputs=jnp.zeros(self.output_dim))
@@ -249,10 +251,15 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
             predicted_outputs, predicted_stds = vmap(self.apply_eval, in_axes=(0, None, None), out_axes=0)(
                 vmapped_params, x, data_stats)
             means, epistemic_stds = predicted_outputs.mean(axis=0), predicted_outputs.std(axis=0)
-            aleatoric_var = (predicted_stds ** 2).mean(axis=0)
-            std = jnp.sqrt((epistemic_stds * alpha) ** 2 + aleatoric_var)
-            chex.assert_shape(std, (self.output_dim,))
-            cdfs = vmap(norm.cdf)(y, means, std)
+            if self.include_aleatoric_std_for_calibration:
+                aleatoric_var = (predicted_stds ** 2).mean(axis=0)
+                std = alpha * jnp.sqrt(epistemic_stds ** 2 + aleatoric_var)
+                chex.assert_shape(std, (self.output_dim,))
+                cdfs = vmap(norm.cdf)(y, means, std)
+            else:
+                std = epistemic_stds * alpha
+                chex.assert_shape(std, (self.output_dim,))
+                cdfs = vmap(norm.cdf)(y, means, std)
 
             def check_cdf(cdf):
                 chex.assert_shape(cdf, ())

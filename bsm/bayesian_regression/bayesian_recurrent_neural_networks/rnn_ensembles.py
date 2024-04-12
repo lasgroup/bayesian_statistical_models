@@ -1,7 +1,7 @@
 import time
 from collections import OrderedDict
 from functools import partial
-from typing import Sequence, Dict, Tuple, Optional
+from typing import Sequence, Dict, Tuple, Optional, Callable
 
 import chex
 import flax
@@ -40,6 +40,7 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
                  hidden_state_size: int,
                  num_cells: int,
                  train_sequence_length: int = 1,
+                 activation: Callable = nn.swish,
                  *args,
                  **kwargs,
                  ):
@@ -47,7 +48,7 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
         super().__init__(features=features, *args, **kwargs)
         self.hidden_state_size = hidden_state_size
         self.model = GRUModel(features=features, num_cells=num_cells,
-                              output_dim=self.output_dim, hidden_state_size=hidden_state_size)
+                              output_dim=self.output_dim, hidden_state_size=hidden_state_size, activation=activation)
         self.normalizer = Normalizer()
         self.hidden_size = self.hidden_state_size * num_cells
 

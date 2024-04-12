@@ -1,11 +1,12 @@
 from abc import abstractmethod
 from collections import OrderedDict
 from functools import partial
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Callable
 from typing import Sequence
 
 import chex
 import flax
+from flax import linen as nn
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -40,6 +41,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
                  num_particles: int,
                  weight_decay: float = 1e-4,
                  lr_rate: optax.Schedule | float = optax.constant_schedule(1e-3),
+                 activation: Callable = nn.swish,
                  num_calibration_ps: int = 10,
                  num_test_alphas: int = 100,
                  logging_wandb: bool = True,
@@ -53,7 +55,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_particles = num_particles
-        self.model = MLP(features=features, output_dim=self.output_dim)
+        self.model = MLP(features=features, output_dim=self.output_dim, activation=activation)
         self.tx = optax.adamw(learning_rate=lr_rate, weight_decay=weight_decay)
         self.normalizer = Normalizer()
         self.num_calibration_ps = num_calibration_ps

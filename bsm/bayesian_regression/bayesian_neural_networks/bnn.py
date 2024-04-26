@@ -380,7 +380,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
                 wandb.log(jtu.tree_map(lambda x: x[i], train_statistics))
                 if i % eval_frequency == 0:
                     wandb.log(jtu.tree_map(lambda x: x[i], eval_statistics))
-        if self.train_share > 0:
+        if self.train_share < 1:
             if eval_data.inputs.shape[0] > self.eval_batch_size:
                 new_eval_buffer_state, data_batch = self.eval_buffer.sample(eval_buffer_state)
                 calibrate_alpha = self.calibrate(new_model_state.vmapped_params, data_batch.inputs, data_batch.outputs,

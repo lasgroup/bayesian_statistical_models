@@ -53,6 +53,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
                  return_best_model: bool = False,
                  max_buffer_size: int = 1_000_000,
                  include_aleatoric_std_for_calibration: bool = False,
+                 calibration: bool = True,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_particles = num_particles
@@ -73,6 +74,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
         self._eval_frequency = eval_frequency
         self.set_up_data_buffers()
         self.include_aleatoric_std_for_calibration = include_aleatoric_std_for_calibration
+        self.calibration = calibration
 
     def set_up_data_buffers(self):
         dummy_data_sample = Data(inputs=jnp.zeros(self.input_dim), outputs=jnp.zeros(self.output_dim))
@@ -380,7 +382,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
                 wandb.log(jtu.tree_map(lambda x: x[i], train_statistics))
                 if i % eval_frequency == 0:
                     wandb.log(jtu.tree_map(lambda x: x[i], eval_statistics))
-        if self.train_share < 1:
+        if self.train_share < 1 and self.calibration:
             if eval_data.inputs.shape[0] > self.eval_batch_size:
                 new_eval_buffer_state, data_batch = self.eval_buffer.sample(eval_buffer_state)
                 calibrate_alpha = self.calibrate(new_model_state.vmapped_params, data_batch.inputs, data_batch.outputs,

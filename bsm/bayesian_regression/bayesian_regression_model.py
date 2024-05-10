@@ -9,10 +9,12 @@ from bsm.utils.type_aliases import ModelState
 
 
 class BayesianRegressionModel(ABC, Generic[ModelState]):
-    def __init__(self, input_dim: int, output_dim: int):
+    def __init__(self, input_dim: int, output_dim: int, logging_frequency: int = 1):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.normalizer = Normalizer()
+        self.logging_frequency = logging_frequency
+
 
     @abstractmethod
     def posterior(self, input: chex.Array, model_state: ModelState) -> Tuple[Distribution, Distribution]:
@@ -25,7 +27,7 @@ class BayesianRegressionModel(ABC, Generic[ModelState]):
         pass
 
     @abstractmethod
-    def fit_model(self, data: Data, num_epochs: int, model_state: ModelState) -> ModelState:
+    def fit_model(self, data: Data, num_training_steps: int, model_state: ModelState) -> ModelState:
         pass
 
     def init(self, key: chex.Array) -> ModelState:

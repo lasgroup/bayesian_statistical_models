@@ -224,8 +224,8 @@ class DeterministicGRUEnsemble(DeterministicEnsemble):
             eval_data = permuted_data
         return data_stats, train_data, eval_data
 
-    def fit_model(self, data: Data, num_epochs: int, model_state: RNNState) -> RNNState:
-        bnn_state = super().fit_model(data, num_epochs, model_state)
+    def fit_model(self, data: Data, num_training_steps: int, model_state: RNNState) -> RNNState:
+        bnn_state = super().fit_model(data, num_training_steps, model_state)
         return RNNState(
             vmapped_params=bnn_state.vmapped_params,
             data_stats=bnn_state.data_stats,
@@ -338,7 +338,7 @@ if __name__ == '__main__':
             group='test group',
         )
 
-    model_params = model.fit_model(data, num_epochs=2000, model_state=init_model_state)
+    model_params = model.fit_model(data, num_training_steps=2000, model_state=init_model_state)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)

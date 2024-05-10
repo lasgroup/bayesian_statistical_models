@@ -104,25 +104,23 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         statiscs = OrderedDict(nll=loss)
         return opt_state, vmapped_params, statiscs
 
-    @partial(jax.jit, static_argnums=(0, 1))
-    def _train_model(self, num_epochs: int, model_state: GPModelState, data_stats: DataStats, data: Data) \
-            -> [GPModelState, OrderedDict]:
+    def _train_model(self, num_training_steps: int, model_state: GPModelState, data_stats: DataStats, data: Data) \
+            -> GPModelState:
         vmapped_params = model_state.params
         opt_state = self.tx.init(vmapped_params)
 
-        def f(carry, _):
-            opt_state, vmapped_params = carry
+        for train_step in range(num_training_steps):
             opt_state, vmapped_params, statistics = self._step_jit(opt_state, vmapped_params, data.inputs,
                                                                    data.outputs, data_stats)
-            return (opt_state, vmapped_params), statistics
+            if self.logging_wandb and train_step % self.logging_frequency == 0:
+                wandb.log(statistics)
 
-        (opt_state, vmapped_params), statistics = scan(f, (opt_state, vmapped_params), None, length=num_epochs)
         new_model_state = GPModelState(history=data, data_stats=data_stats, params=vmapped_params)
-        return new_model_state, statistics
+        return new_model_state
 
     def fit_model(self,
                   data: Data,
-                  num_epochs: int,
+                  num_training_steps: int,
                   model_state: GPModelState) -> GPModelState:
 
         if self.normalize:
@@ -130,12 +128,7 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         else:
             data_stats = self.normalizer.init_stats(data)
 
-        new_model_state, statistics = self._train_model(num_epochs, model_state, data_stats, data)
-
-        if self.logging_wandb:
-            for i in range(num_epochs):
-                wandb.log(jtu.tree_map(lambda x: x[i], statistics))
-
+        new_model_state = self._train_model(num_training_steps, model_state, data_stats, data)
         return new_model_state
 
     @partial(jit, static_argnums=0)
@@ -219,9 +212,9 @@ if __name__ == '__main__':
             group='test group',
         )
 
-    model_state = model.fit_model(data=data, num_epochs=1000, model_state=model_state)
+    model_state = model.fit_model(data=data, num_training_steps=1000, model_state=model_state)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
-    model_state = model.fit_model(data=data, num_epochs=1000, model_state=model_state)
+    model_state = model.fit_model(data=data, num_training_steps=1000, model_state=model_state)
 
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)
     preds = vmap(model.posterior, in_axes=(0, None))(test_xs, model_state)[0]

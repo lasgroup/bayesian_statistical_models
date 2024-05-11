@@ -9,6 +9,7 @@ import flax
 from flax import linen as nn
 import jax
 import jax.numpy as jnp
+import numpy as np
 import jax.random as jr
 import jax.tree_util as jtu
 import optax
@@ -290,7 +291,9 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
 
         vmapped_params = model_state.vmapped_params
         opt_state = self.tx.init(vmapped_params)
-
+        # convert to numpy array which are cheaper for indexing
+        train_data = Data(inputs=np.asarray(train_data.inputs), outputs=np.asarray(train_data.outputs))
+        eval_data = Data(inputs=np.asarray(eval_data.inputs), outputs=np.asarray(eval_data.outputs))
         best_statistics = OrderedDict(eval_nll=NO_EVAL_VALUE)
         evaluated_model = False
         best_params = vmapped_params

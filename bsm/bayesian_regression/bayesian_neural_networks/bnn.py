@@ -72,19 +72,8 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
         assert not (eval_frequency is None and self.return_best_model), "cannot return best model if not " \
                                                                         "evaluating"
         self._eval_frequency = eval_frequency
-        self.set_up_data_buffers()
         self.include_aleatoric_std_for_calibration = include_aleatoric_std_for_calibration
         self.calibration = calibration
-
-    def set_up_data_buffers(self):
-        dummy_data_sample = Data(inputs=jnp.zeros(self.input_dim), outputs=jnp.zeros(self.output_dim))
-        self.train_buffer = UniformSamplingQueue(max_replay_size=self.max_buffer_size,
-                                                 dummy_data_sample=dummy_data_sample,
-                                                 sample_batch_size=self.batch_size)
-
-        self.eval_buffer = UniformSamplingQueue(max_replay_size=self.max_buffer_size,
-                                                dummy_data_sample=dummy_data_sample,
-                                                sample_batch_size=self.eval_batch_size)
 
     @property
     def evaluation_frequency(self):
@@ -282,12 +271,24 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
 
         return eval_stats
 
+    @staticmethod
+    def sample_batch(data: Data, batch_size: int, rng: jax.random.PRNGKeyArray):
+        size = len(data.inputs)
+        ind = jr.randint(rng, (batch_size,), 0, size)
+        data_batch = Data(
+            inputs=data.inputs[ind],
+            outputs=data.outputs[ind]
+        )
+        return data_batch
+
     def _train_model(self,
                      num_training_steps: int,
                      model_state: BNNState,
                      data_stats: DataStats,
-                     train_buffer_state: ReplayBufferState,
-                     eval_buffer_state: ReplayBufferState) -> BNNState:
+                     train_data: Data,
+                     eval_data: Data,
+                     rng: jax.random.PRNGKeyArray,
+                     ) -> BNNState:
 
         vmapped_params = model_state.vmapped_params
         opt_state = self.tx.init(vmapped_params)
@@ -296,12 +297,14 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
         evaluated_model = False
         best_params = vmapped_params
         for train_step in range(num_training_steps):
-            train_buffer_state, data_batch = self.train_buffer.sample(train_buffer_state)
+            data_rng, rng = jr.split(rng, 2)
+            data_batch = self.sample_batch(train_data, self.batch_size, data_rng)
             opt_state, vmapped_params, statistics = self.step_jit(opt_state, vmapped_params, data_batch.inputs,
                                                                   data_batch.outputs, data_stats)
             if train_step % self.evaluation_frequency == 0:
                 evaluated_model = True
-                eval_buffer_state, eval_data_batch = self.eval_buffer.sample(eval_buffer_state)
+                eval_rng, rng = jr.split(rng, 2)
+                eval_data_batch = self.sample_batch(eval_data, self.eval_batch_size, eval_rng)
                 eval_statistics = self.evaluate_model(vmapped_params=vmapped_params, eval_data=eval_data_batch,
                                                       data_stats=data_stats)
                 statistics.update(eval_statistics)
@@ -339,24 +342,20 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
         return data_stats, train_data, eval_data
 
     def fit_model(self, data: Data, num_training_steps: int, model_state: BNNState) -> BNNState:
-        self.set_up_data_buffers()
-        self.key, key_buffer, key_eval_buffer = jr.split(self.key, 3)
-        buffer_state = self.train_buffer.init(key_buffer)
-        eval_buffer_state = self.eval_buffer.init(key_eval_buffer)
-
+        self.key, key_train = jr.split(self.key, 2)
         data_stats, train_data, eval_data = self._prepare_data_for_training(data)
 
-        train_buffer_state = self.train_buffer.insert(buffer_state, train_data)
-        eval_buffer_state = self.eval_buffer.insert(eval_buffer_state, eval_data)
         new_model_state = self._train_model(num_training_steps,
                                             model_state,
                                             data_stats,
-                                            train_buffer_state,
-                                            eval_buffer_state
+                                            train_data,
+                                            eval_data,
+                                            key_train
                                             )
         if self.train_share < 1 and self.calibration:
             if eval_data.inputs.shape[0] > self.eval_batch_size:
-                new_eval_buffer_state, data_batch = self.eval_buffer.sample(eval_buffer_state)
+                self.key, eval_key = jr.split(self.key, 2)
+                data_batch = self.sample_batch(eval_data, self.eval_batch_size, eval_key)
                 calibrate_alpha = self.calibrate(new_model_state.vmapped_params, data_batch.inputs, data_batch.outputs,
                                                  data_stats)
             else:

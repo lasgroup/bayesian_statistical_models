@@ -328,7 +328,7 @@ if __name__ == '__main__':
                                      hidden_state_size=20,
                                      num_cells=1, num_particles=num_particles, output_stds=data_std,
                                      train_sequence_length=window_size,
-                                     logging_wandb=log_training, eval_frequency=5, return_best_model=True)
+                                     logging_wandb=log_training, eval_frequency=500, return_best_model=True)
     init_model_state = model.init(model.key)
     start_time = time.time()
     print('Starting with training')
@@ -338,7 +338,7 @@ if __name__ == '__main__':
             group='test group',
         )
 
-    model_params = model.fit_model(data, num_training_steps=2000, model_state=init_model_state)
+    model_params = model.fit_model(data, num_training_steps=5000, model_state=init_model_state)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
     test_xs = jnp.linspace(-5, 15, 1000).reshape(-1, 1)

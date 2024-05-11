@@ -47,7 +47,7 @@ if __name__ == '__main__':
 
     noise_level = 0.1
     d_l, d_u = 0, 10
-    xs = jnp.linspace(d_l, d_u, 32).reshape(-1, 1)
+    xs = jnp.linspace(d_l, d_u, 256).reshape(-1, 1)
     ys = jnp.concatenate([jnp.sin(xs), jnp.cos(xs)], axis=1)
     ys = ys + noise_level * random.normal(key=random.PRNGKey(0), shape=ys.shape)
     data_std = noise_level * jnp.ones(shape=(output_dim,))
@@ -56,7 +56,8 @@ if __name__ == '__main__':
 
     num_particles = 10
     model = DeterministicEnsemble(input_dim=input_dim, output_dim=output_dim, features=[64, 64, 64],
-                                  num_particles=num_particles, output_stds=data_std, logging_wandb=logging_wandb)
+                                  num_particles=num_particles, output_stds=data_std, logging_wandb=logging_wandb,
+                                  eval_frequency=500)
     model_state = model.init(model.key)
     start_time = time.time()
     print('Starting with training')

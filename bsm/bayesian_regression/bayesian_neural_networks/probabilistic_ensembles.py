@@ -76,7 +76,7 @@ if __name__ == '__main__':
             group='test group',
         )
 
-    model_state = model.fit_model(data=data, num_epochs=1000, model_state=model_state)
+    model_state = model.fit_model(data=data, num_training_steps=1000, model_state=model_state)
     print(f'Training time: {time.time() - start_time:.2f} seconds')
 
     test_xs = jnp.linspace(-3, 13, 1000).reshape(-1, 1)

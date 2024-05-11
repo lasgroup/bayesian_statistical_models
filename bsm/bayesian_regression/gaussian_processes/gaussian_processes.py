@@ -6,10 +6,8 @@ import chex
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import jax.tree_util as jtu
 import optax
 from jax import vmap, jit
-from jax.lax import scan
 from jax.scipy.stats import multivariate_normal
 from jaxtyping import PyTree
 

@@ -12,10 +12,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
 import optax
-from brax.training.replay_buffers import UniformSamplingQueue, ReplayBufferState
 from jax import jit
 from jax import vmap
-from jax.lax import scan
 from jax.scipy.stats import norm
 from jaxtyping import PyTree
 
@@ -272,7 +270,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
         return eval_stats
 
     @staticmethod
-    def sample_batch(data: Data, batch_size: int, rng: jax.random.PRNGKeyArray):
+    def sample_batch(data: Data, batch_size: int, rng: jr.PRNGKey):
         size = len(data.inputs)
         ind = jr.randint(rng, (batch_size,), 0, size)
         data_batch = Data(
@@ -287,7 +285,7 @@ class BayesianNeuralNet(BayesianRegressionModel[BNNState]):
                      data_stats: DataStats,
                      train_data: Data,
                      eval_data: Data,
-                     rng: jax.random.PRNGKeyArray,
+                     rng: jr.PRNGKey,
                      ) -> BNNState:
 
         vmapped_params = model_state.vmapped_params

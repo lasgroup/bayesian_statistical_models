@@ -93,7 +93,7 @@ class ProbabilisticFSVGDEnsemble(ProbabilisticEnsemble):
         def neg_log_likelihood(predictions, output):
             mu, sig = jnp.split(predictions, 2, axis=-1)
             sig = nn.softplus(sig)
-            sig = jnp.clip(sig, 0, self.sig_max) + self.sig_min
+            sig = jnp.clip(sig, self.sig_min, self.sig_max)
             return self._neg_log_posterior(mu, sig, output), mu
 
         (negative_log_likelihood, mu), grad_post = jax.value_and_grad(neg_log_likelihood, has_aux=True) \

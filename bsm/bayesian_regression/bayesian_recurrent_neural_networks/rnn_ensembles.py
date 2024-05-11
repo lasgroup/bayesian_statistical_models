@@ -296,7 +296,7 @@ class ProbabilisticGRUEnsemble(DeterministicGRUEnsemble):
         out = out.reshape(2 * self.output_dim) if ndim == 1 else out
         mean, sig = jnp.split(out, 2, axis=-1)
         sig = nn.softplus(sig)
-        sig = jnp.clip(sig, 0, self.sig_max) + self.sig_min
+        sig = jnp.clip(sig, self.sig_min, self.sig_max)
         assert mean.shape[-1] == self.output_dim and sig.shape[-1] == self.output_dim
         assert new_hidden_state.shape[-1] == self.hidden_size
         return new_hidden_state, mean, sig

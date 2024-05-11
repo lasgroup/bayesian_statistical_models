@@ -42,7 +42,7 @@ class ProbabilisticEnsemble(DeterministicEnsemble):
         out = self.model.apply({'params': params}, x)
         mu, sig = jnp.split(out, 2, axis=-1)
         sig = nn.softplus(sig)
-        sig = jnp.clip(sig, 0, self.sig_max) + self.sig_min
+        sig = jnp.clip(sig, self.sig_min, self.sig_max)
         mean = self.normalizer.denormalize(mu, data_stats.outputs)
         std = self.normalizer.denormalize_std(sig, data_stats.outputs)
         return mean, std

@@ -12,13 +12,14 @@ from bsm.bayesian_regression.bayesian_neural_networks.probabilistic_ensembles im
 from bsm.statistical_model.abstract_statistical_model import StatisticalModel
 from bsm.utils.normalization import Data
 from bsm.utils.type_aliases import StatisticalModelState
+from typing import Union
 
 
 class BNNStatisticalModel(StatisticalModel[BNNState]):
     def __init__(self,
                  input_dim: int,
                  output_dim: int,
-                 num_training_steps: int = 1000,
+                 num_training_steps: Union[int, optax.Schedule] = 1000,
                  beta: chex.Array | optax.Schedule | None = None,
                  bnn_type: BayesianNeuralNet = DeterministicEnsemble,
                  *args, **kwargs):
@@ -35,7 +36,11 @@ class BNNStatisticalModel(StatisticalModel[BNNState]):
             raise NotImplementedError(f"Unknown BNN type: {self.bnn_type}")
         super().__init__(input_dim, output_dim, model)
         self.model = model
-        self.num_training_steps = num_training_steps
+        # num training steps is constant convert it to a constant scheduler
+        if isinstance(num_training_steps, int):
+            self.num_training_steps = optax.constant_schedule(num_training_steps)
+        else:
+            self.num_training_steps = num_training_steps
         if beta is None:
             beta = jnp.ones(shape=(output_dim,))
         if isinstance(beta, chex.Array):
@@ -45,7 +50,9 @@ class BNNStatisticalModel(StatisticalModel[BNNState]):
     def update(self,
                stats_model_state: StatisticalModelState[BNNState],
                data: Data) -> StatisticalModelState[BNNState]:
-        new_model_state = self.model.fit_model(data, self.num_training_steps, stats_model_state.model_state)
+        size = len(data.inputs)
+        num_training_steps = self.num_training_steps(size)
+        new_model_state = self.model.fit_model(data, num_training_steps, stats_model_state.model_state)
         beta = self._potential_beta(data.inputs.shape[0])
         assert beta.shape == (self.output_dim,)
         return StatisticalModelState(model_state=new_model_state, beta=beta)

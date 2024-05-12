@@ -8,6 +8,7 @@ from bsm.bayesian_regression.gaussian_processes.gaussian_processes import GPMode
 from bsm.statistical_model.abstract_statistical_model import StatisticalModel
 from bsm.utils.normalization import Data
 from bsm.utils.type_aliases import StatisticalModelState
+from typing import Union
 
 
 class GPStatisticalModel(StatisticalModel[GPModelState]):
@@ -16,7 +17,7 @@ class GPStatisticalModel(StatisticalModel[GPModelState]):
                  output_dim: int,
                  f_norm_bound: float = 1.0,
                  delta: float = 0.1,
-                 num_training_steps: int = 1000,
+                 num_training_steps: Union[int, optax.Schedule] = 1000,
                  beta: chex.Array | optax.Schedule | None = None,
                  normalize: bool = True,
                  *args, **kwargs
@@ -31,9 +32,15 @@ class GPStatisticalModel(StatisticalModel[GPModelState]):
         if isinstance(beta, chex.Array):
             beta = optax.constant_schedule(beta)
         self._potential_beta = beta
+        if isinstance(num_training_steps, int):
+            self.num_training_steps = optax.constant_schedule(num_training_steps)
+        else:
+            self.num_training_steps = num_training_steps
 
     def update(self, stats_model_state: StatisticalModelState, data: Data) -> StatisticalModelState[GPModelState]:
-        new_model_state = self.model.fit_model(data, self.num_training_steps, stats_model_state.model_state)
+        size = len(data.inputs)
+        num_training_steps = self.num_training_steps(size)
+        new_model_state = self.model.fit_model(data, num_training_steps, stats_model_state.model_state)
         if self._potential_beta is None:
             beta = self.compute_beta(new_model_state, data)
             return StatisticalModelState(model_state=new_model_state, beta=beta)

@@ -51,7 +51,7 @@ class BNNStatisticalModel(StatisticalModel[BNNState]):
                stats_model_state: StatisticalModelState[BNNState],
                data: Data) -> StatisticalModelState[BNNState]:
         size = len(data.inputs)
-        num_training_steps = self.num_training_steps(size)
+        num_training_steps = int(self.num_training_steps(size))
         new_model_state = self.model.fit_model(data, num_training_steps, stats_model_state.model_state)
         beta = self._potential_beta(data.inputs.shape[0])
         assert beta.shape == (self.output_dim,)

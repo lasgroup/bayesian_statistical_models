@@ -39,7 +39,7 @@ class GPStatisticalModel(StatisticalModel[GPModelState]):
 
     def update(self, stats_model_state: StatisticalModelState, data: Data) -> StatisticalModelState[GPModelState]:
         size = len(data.inputs)
-        num_training_steps = self.num_training_steps(size)
+        num_training_steps = int(self.num_training_steps(size))
         new_model_state = self.model.fit_model(data, num_training_steps, stats_model_state.model_state)
         if self._potential_beta is None:
             beta = self.compute_beta(new_model_state, data)

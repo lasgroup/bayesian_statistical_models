@@ -17,6 +17,7 @@ required = [
     'argparse-dataclass>=0.2.1',
     'jaxutils',
     'chex',
+    'cvxpy',
     'brax>=0.9.1'
 ]
 

@@ -10,13 +10,16 @@ def alpha_minimize_norm(kernel_matrix: Float[Array, 'n_obs n_obs'],
                         sigma: Scalar,
                         alpha_mu: Float[Array, 'n_obs'],
                         beta: Scalar = 2) -> Tuple[Float[Array, 'n_obs'], Problem]:
+    numerical_correction = 0.0
     n_obs = kernel_matrix.shape[0]
     alpha = cp.Variable(n_obs)
     alpha_diff = alpha - alpha_mu
     K = kernel_matrix
+    I = jnp.eye(n_obs)
 
-    constraints = [alpha_diff @ cp.psd_wrap(K + 1 / sigma ** 2 * K @ K.T) @ alpha_diff <= 4 * beta ** 2]
-    objective = cp.Minimize(alpha @ cp.psd_wrap(K) @ alpha)
+    constraints = [
+        alpha_diff @ cp.psd_wrap(K + 1 / sigma ** 2 * K @ K.T + numerical_correction * I) @ alpha_diff <= 4 * beta ** 2]
+    objective = cp.Minimize(alpha @ cp.psd_wrap(K + numerical_correction * I) @ alpha)
     prob = cp.Problem(objective, constraints)
 
     # The optimal objective value is returned by `prob.solve()`.
@@ -29,13 +32,17 @@ def alpha_minimize_distance(kernel_matrix: Float[Array, 'n_obs n_obs'],
                             sigma: Scalar,
                             alpha_mu: Float[Array, 'n_obs'],
                             norm_bound: Scalar = 3) -> Tuple[Float[Array, 'n_obs'], Problem]:
+    numerical_correction = 0.0
     n_obs = kernel_matrix.shape[0]
     alpha = cp.Variable(n_obs)
     alpha_diff = alpha - alpha_mu
     K = kernel_matrix
 
-    constraints = [alpha @ cp.psd_wrap(K) @ alpha <= norm_bound]
-    objective = cp.Minimize(alpha_diff @ cp.psd_wrap(K + 1 / sigma ** 2 * K @ K.T) @ alpha_diff)
+    I = jnp.eye(n_obs)
+
+    constraints = [alpha @ cp.psd_wrap(K + numerical_correction * I) @ alpha <= norm_bound]
+    objective = cp.Minimize(
+        alpha_diff @ cp.psd_wrap(K + 1 / sigma ** 2 * K @ K.T + numerical_correction * I) @ alpha_diff)
 
     prob = cp.Problem(objective, constraints)
 

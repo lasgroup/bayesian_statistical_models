@@ -9,13 +9,14 @@ import jax.random as jr
 import optax
 from jax import vmap, jit
 from jax.scipy.stats import multivariate_normal
-from jaxtyping import PyTree
+from jaxtyping import PyTree, Float, Array, Scalar
 
 import wandb
 from bsm.bayesian_regression.bayesian_regression_model import BayesianRegressionModel
 from bsm.bayesian_regression.gaussian_processes.kernels import Kernel, RBF
 from bsm.utils.normal_with_aleatoric import ExtendedNormal
 from bsm.utils.normalization import Normalizer, DataStats, Data
+from bsm.bayesian_regression.gaussian_processes.rkhs_optimization import alpha_minimize_distance, alpha_minimize_norm
 
 
 @chex.dataclass
@@ -23,6 +24,7 @@ class GPModelState:
     history: Data
     data_stats: DataStats
     params: PyTree
+    alphas: Float[Array, 'output_dim num_data'] | None = None
 
 
 class GaussianProcess(BayesianRegressionModel[GPModelState]):
@@ -34,6 +36,11 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
                  seed: int = 0,
                  logging_wandb: bool = True,
                  normalize: bool = True,
+                 predict_regularized_mean: bool = False,
+                 regularized_mean_strategy: str = 'minimize_norm',
+                 # Should be in ['minimize_norm', 'minimize_distance']
+                 f_norm_bound_RKHS_optimization: Float[Array, 'output_dim'] | Scalar = jnp.array(100.0),
+                 beta_RKHS_optimization: Float[Array, 'output_dim'] | Scalar = jnp.array(3.0),
                  *args,
                  **kwargs
                  ):
@@ -48,6 +55,17 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         self.tx = optax.adamw(learning_rate=lr_rate, weight_decay=weight_decay)
         self.key = jr.PRNGKey(seed)
         self.logging_wandb = logging_wandb
+        self.predict_regularized_mean = predict_regularized_mean
+        self.regularized_mean_strategy = regularized_mean_strategy
+
+        if f_norm_bound_RKHS_optimization.shape == ():
+            f_norm_bound_RKHS_optimization = f_norm_bound_RKHS_optimization * jnp.ones(shape=(self.output_dim,))
+        self.f_norm_bound_RKHS_optimization = f_norm_bound_RKHS_optimization
+
+        if beta_RKHS_optimization.shape == ():
+            beta_RKHS_optimization = beta_RKHS_optimization * jnp.ones(
+                shape=(self.output_dim,))
+        self.beta_RKHS_optimization = beta_RKHS_optimization
 
         self.v_kernel = vmap(self.kernel.apply, in_axes=(0, None, None), out_axes=0)
         self.m_kernel = vmap(self.v_kernel, in_axes=(None, 0, None), out_axes=1)
@@ -65,7 +83,7 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
             data_stats = self.normalizer.init_stats(data)
         keys = jr.split(key, self.output_dim)
         params = vmap(self.kernel.init)(keys)
-        return GPModelState(params=params, data_stats=data_stats, history=data)
+        return GPModelState(params=params, data_stats=data_stats, history=data, alphas=jnp.ones_like(outputs))
 
     def loss(self, vmapped_params, inputs, outputs, data_stats: DataStats):
         assert inputs.shape[0] == outputs.shape[0]
@@ -116,6 +134,44 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         new_model_state = GPModelState(history=data, data_stats=data_stats, params=vmapped_params)
         return new_model_state
 
+    def compute_alphas_for_regularized_mean(self, gp_model: GPModelState) -> Float[Array, 'output_dim num_data']:
+        # Compute covariance matrix
+        num_data = gp_model.history.inputs.shape[0]
+        history_inputs_norm = vmap(self.normalizer.normalize, in_axes=(0, None))(gp_model.history.inputs,
+                                                                                 gp_model.data_stats.inputs)
+        history_outputs_norm = vmap(self.normalizer.normalize, in_axes=(0, None))(gp_model.history.outputs,
+                                                                                  gp_model.data_stats.outputs)
+        covariance_matrix = self.m_kernel_multiple_output(history_inputs_norm, history_inputs_norm, gp_model.params)
+        assert covariance_matrix.shape == (self.output_dim, num_data, num_data)
+        # Add noise term
+        extended_eye = jnp.repeat(jnp.eye(covariance_matrix.shape[-1])[None, ...], repeats=self.output_dim, axis=0)
+        outputs_stds_norm = self.normalizer.normalize_std(self.output_stds, gp_model.data_stats.outputs)
+        noise_term = extended_eye * outputs_stds_norm[:, None, None] ** 2
+        noisy_covariance_matrix = covariance_matrix + noise_term
+        cholesky_tuples = vmap(jax.scipy.linalg.cho_factor)(noisy_covariance_matrix)
+
+        # Compute posterior mean
+        denoised_mean = vmap(jax.scipy.linalg.cho_solve, in_axes=((0, None), 1))((cholesky_tuples[0], False),
+                                                                                 history_outputs_norm)
+
+        # We have
+        new_alphas = []
+        for i in range(self.output_dim):
+            # alpha_minimize_norm, alpha_minimize_distance
+            if self.regularized_mean_strategy == 'minimize_distance':
+                alpha_value, prob = alpha_minimize_distance(kernel_matrix=covariance_matrix[i],
+                                                            sigma=outputs_stds_norm[i],
+                                                            alpha_mu=denoised_mean[i],
+                                                            norm_bound=self.f_norm_bound_RKHS_optimization[i])
+            elif self.regularized_mean_strategy == 'minimize_norm':
+                alpha_value, prob = alpha_minimize_norm(kernel_matrix=covariance_matrix[i],
+                                                        sigma=outputs_stds_norm[i],
+                                                        alpha_mu=denoised_mean[i],
+                                                        beta=self.beta_RKHS_optimization[i])
+            new_alphas.append(alpha_value)
+        new_alphas = jnp.stack(new_alphas, axis=0)
+        return new_alphas
+
     def fit_model(self,
                   data: Data,
                   num_training_steps: int,
@@ -127,6 +183,9 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
             data_stats = self.normalizer.init_stats(data)
 
         new_model_state = self._train_model(num_training_steps, model_state, data_stats, data)
+        if self.predict_regularized_mean:
+            alphas = self.compute_alphas_for_regularized_mean(new_model_state)
+            new_model_state = new_model_state.replace(alphas=alphas)
         return new_model_state
 
     @partial(jit, static_argnums=0)
@@ -165,7 +224,10 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
         # Compute posterior mean
         denoised_mean = vmap(jax.scipy.linalg.cho_solve, in_axes=((0, None), 1))((cholesky_tuples[0], False),
                                                                                  history_outputs_norm)
-        mean = vmap(jnp.dot)(k_x_X, denoised_mean)
+        if self.predict_regularized_mean:
+            mean = vmap(jnp.dot)(k_x_X, model_state.alphas)
+        else:
+            mean = vmap(jnp.dot)(k_x_X, denoised_mean)
 
         # Denormalize
         mean = self.normalizer.denormalize(mean, gp_model.data_stats.outputs)
@@ -184,7 +246,9 @@ class GaussianProcess(BayesianRegressionModel[GPModelState]):
 if __name__ == '__main__':
     import time
     import matplotlib.pyplot as plt
-    jax.config.update('jax_log_compiles', True)
+
+    # jax.config.update('jax_log_compiles', True)
+    jax.config.update("jax_enable_x64", True)
 
     key = jr.PRNGKey(0)
     input_dim = 1
@@ -200,7 +264,8 @@ if __name__ == '__main__':
 
     logging = False
     num_particles = 10
-    model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False)
+    model = GaussianProcess(input_dim=input_dim, output_dim=output_dim, output_stds=data_std, logging_wandb=False,
+                            predict_regularized_mean=True, regularized_mean_strategy='minimize_distance')
     model_state = model.init(model.key)
     start_time = time.time()
     print('Starting with training')
